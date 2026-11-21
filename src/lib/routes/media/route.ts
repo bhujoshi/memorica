@@ -8,9 +8,27 @@ import {
   ALLOWED_MEDIA_TYPES,
   MediaScope,
   detectMediaMime,
+  isHeifOrAvif,
   readStoredMediaBytes,
   storeEventMedia,
 } from "@/lib/storage";
+
+interface UploadedBlobLike {
+  size: number;
+  type: string;
+  name?: string;
+  arrayBuffer: () => Promise<ArrayBuffer>;
+}
+
+function isUploadedFile(value: unknown): value is UploadedBlobLike {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<UploadedBlobLike>;
+  return (
+    typeof candidate.arrayBuffer === "function" &&
+    typeof candidate.size === "number" &&
+    typeof candidate.type === "string"
+  );
+}
 
 export async function upload(req: NextRequest, weddingId: string) {
   const user = await getAuthenticatedUserFromCookies();
@@ -41,9 +59,15 @@ export async function upload(req: NextRequest, weddingId: string) {
     );
   }
 
-  if (Number(req.headers.get("content-length")) > 21 * 1024 * 1024) {
+  const contentLength = Number(req.headers.get("content-length") || 0);
+  if (Number.isFinite(contentLength) && contentLength > 21 * 1024 * 1024) {
     return NextResponse.json({ error: "Maximum file size is 20 MB." }, { status: 413 });
   }
+
+  const formatError =
+    scope === "social" || scope === "photo"
+      ? "Choose a JPG, PNG, WebP or GIF photo under 20 MB."
+      : "Choose a JPG, PNG, WebP, GIF, MP4, WebM or PDF under 20 MB.";
 
   try {
     const form = await req.formData();
@@ -53,40 +77,56 @@ export async function upload(req: NextRequest, weddingId: string) {
         ? ALLOWED_IMAGE_TYPES
         : ALLOWED_MEDIA_TYPES;
 
-    if (
-      !(file instanceof File) ||
-      !file.size ||
-      file.size > 20 * 1024 * 1024 ||
-      !allowed.includes(file.type)
-    ) {
+    if (!isUploadedFile(file) || !file.size) {
+      return NextResponse.json({ error: formatError }, { status: 400 });
+    }
+    if (file.size > 20 * 1024 * 1024) {
       return NextResponse.json(
-        {
-          error:
-            scope === "social" || scope === "photo"
-              ? "Choose a JPG, PNG, WebP or GIF photo under 20 MB."
-              : "Choose a JPG, PNG, WebP, GIF, MP4, WebM or PDF under 20 MB.",
-        },
-        { status: 400 }
+        { error: "Maximum file size is 20 MB." },
+        { status: 413 }
       );
     }
 
     const data = Buffer.from(await file.arrayBuffer());
-    if (detectMediaMime(data) !== file.type) {
-      return NextResponse.json(
-        { error: "The file contents do not match its format." },
-        { status: 400 }
-      );
+    const detectedMime = detectMediaMime(data);
+    if (!detectedMime) {
+      const lowerType = file.type.toLowerCase();
+      if (
+        isHeifOrAvif(data) ||
+        lowerType.includes("heic") ||
+        lowerType.includes("heif") ||
+        lowerType.includes("avif")
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "HEIC/AVIF images aren't supported directly. Please export or save your card as JPG, PNG, or PDF.",
+          },
+          { status: 400 }
+        );
+      }
+      return NextResponse.json({ error: formatError }, { status: 400 });
     }
+
+    if (!allowed.includes(detectedMime)) {
+      return NextResponse.json({ error: formatError }, { status: 400 });
+    }
+
+    const rawName =
+      typeof file.name === "string" && file.name.trim()
+        ? file.name.trim()
+        : "invitation";
 
     const asset = await storeEventMedia({
       weddingId: access.wedding.id,
-      fileName: file.name,
-      mime: file.type,
+      fileName: rawName,
+      mime: detectedMime,
       data,
       scope,
     });
     return NextResponse.json({ asset }, { status: 201 });
-  } catch {
+  } catch (err) {
+    console.error("[Memorica Media Upload Error]", err);
     return NextResponse.json(
       { error: "Could not upload this file. Try again." },
       { status: 400 }

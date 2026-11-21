@@ -120,9 +120,14 @@ export default function CelebrationSocialHub({
       headers: { ...encodeUserHintHeader(user) },
       body: form,
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Upload failed.");
-    return data.asset.id as string;
+    const data = (await res.json().catch(() => ({}))) as {
+      asset?: { id: string };
+      error?: string;
+    };
+    if (!res.ok || !data.asset) {
+      throw new Error(data.error || `Upload failed (HTTP ${res.status}).`);
+    }
+    return data.asset.id;
   }
 
   async function handlePostPhotoSelect(e: React.ChangeEvent<HTMLInputElement>) {

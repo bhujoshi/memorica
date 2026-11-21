@@ -19,21 +19,86 @@ export const ALLOWED_IMAGE_TYPES = [
   "image/gif",
 ] as const;
 
+const HEIF_AVIF_BRANDS = new Set([
+  "heic",
+  "heix",
+  "hevc",
+  "hevx",
+  "heim",
+  "heis",
+  "mif1",
+  "msf1",
+  "avif",
+  "avis",
+]);
+
+export function isHeifOrAvif(data: Buffer): boolean {
+  if (data.length < 12) return false;
+  if (data.toString("ascii", 4, 8) !== "ftyp") return false;
+  const brand = data.toString("ascii", 8, 12).toLowerCase();
+  return HEIF_AVIF_BRANDS.has(brand);
+}
+
 export function detectMediaMime(data: Buffer): string | null {
-  if (data.subarray(0, 3).equals(Buffer.from([255, 216, 255]))) return "image/jpeg";
-  if (data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
+  if (
+    data.length >= 3 &&
+    data.subarray(0, 3).equals(Buffer.from([255, 216, 255]))
+  ) {
+    return "image/jpeg";
+  }
+  if (
+    data.length >= 8 &&
+    data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+  ) {
     return "image/png";
   }
-  if (["GIF87a", "GIF89a"].includes(data.toString("ascii", 0, 6))) return "image/gif";
   if (
+    data.length >= 6 &&
+    ["GIF87a", "GIF89a"].includes(data.toString("ascii", 0, 6))
+  ) {
+    return "image/gif";
+  }
+  if (
+    data.length >= 12 &&
     data.toString("ascii", 0, 4) === "RIFF" &&
     data.toString("ascii", 8, 12) === "WEBP"
   ) {
     return "image/webp";
   }
-  if (data.toString("ascii", 0, 5) === "%PDF-") return "application/pdf";
-  if (data.toString("ascii", 4, 8) === "ftyp") return "video/mp4";
-  if (data.subarray(0, 4).equals(Buffer.from([26, 69, 223, 163]))) return "video/webm";
+  if (data.length >= 5) {
+    let offset = 0;
+    if (
+      data.length >= 3 &&
+      data[0] === 0xef &&
+      data[1] === 0xbb &&
+      data[2] === 0xbf
+    ) {
+      offset = 3;
+    }
+    const maxScan = Math.min(data.length, 1024);
+    while (
+      offset < maxScan &&
+      (data[offset] === 0x20 ||
+        data[offset] === 0x09 ||
+        data[offset] === 0x0a ||
+        data[offset] === 0x0d)
+    ) {
+      offset++;
+    }
+    if (data.toString("ascii", offset, offset + 5) === "%PDF-") {
+      return "application/pdf";
+    }
+  }
+  if (data.length >= 12 && data.toString("ascii", 4, 8) === "ftyp") {
+    if (isHeifOrAvif(data)) return null;
+    return "video/mp4";
+  }
+  if (
+    data.length >= 4 &&
+    data.subarray(0, 4).equals(Buffer.from([26, 69, 223, 163]))
+  ) {
+    return "video/webm";
+  }
   return null;
 }
 

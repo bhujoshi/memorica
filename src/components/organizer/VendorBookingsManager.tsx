@@ -100,8 +100,13 @@ export default function VendorBookingsManager({
         headers: { ...encodeUserHintHeader(user) },
         body: form,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Upload failed.");
+      const data = (await res.json().catch(() => ({}))) as {
+        asset?: { id: string; name: string };
+        error?: string;
+      };
+      if (!res.ok || !data.asset) {
+        throw new Error(data.error || `Upload failed (HTTP ${res.status}).`);
+      }
       setReceiptAssetId(data.asset.id);
       setNotice(`Attached receipt/contract: ${data.asset.name}`);
     } catch (err) {
