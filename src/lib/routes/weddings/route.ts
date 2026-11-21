@@ -36,10 +36,11 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { eventType, otherEventType, coupleNames, eventTitle, date, endDate, venue, description } =
+    const { eventType, otherEventType, moodTheme, coupleNames, eventTitle, date, endDate, venue, description } =
       body as {
         eventType?: string;
         otherEventType?: string;
+        moodTheme?: string;
         coupleNames?: string;
         eventTitle?: string;
         date?: string;
@@ -52,6 +53,7 @@ export async function POST(req: NextRequest) {
       ownerUserId: user.id,
       eventType,
       otherEventType,
+      moodTheme,
       coupleNames: coupleNames || "",
       eventTitle: eventTitle || "",
       date: date || "",

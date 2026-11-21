@@ -1,4 +1,5 @@
 import { parseEventSetup, normalizeEventSetup, EVENT_TYPES, missingEventDetails, validateSubEventDates, invitationOptions } from "./event-setup";
+import { normalizeEventMood, normalizeGuestGroup } from "./format";
 import crypto from "crypto";
 import { Guest, Wedding, User, EventUpdate, AnalyticsEvent } from "@prisma/client";
 import { prisma } from "./prisma";
@@ -6,6 +7,7 @@ import {
   AccountStatus,
   AnalyticsEventDTO,
   AnalyticsEventType,
+  EventAccessRole,
   EventUpdateDTO,
   GuestConflictDTO,
   GuestDTO,
@@ -78,6 +80,7 @@ export function mapWeddingToDTO(w: Wedding): WeddingDTO {
     slug: w.slug,
     eventType: w.eventType,
     otherEventType: w.otherEventType,
+    moodTheme: normalizeEventMood(w.moodTheme),
     setup: parseEventSetup(w.setupDetails),
     ownerUserId: w.ownerUserId,
     eventTitle: w.eventTitle,
@@ -112,11 +115,16 @@ export function mapGuestToDTO(g: Guest): GuestDTO {
     name: g.name,
     email: g.email,
     phone: g.phone,
+    guestGroup: normalizeGuestGroup(g.guestGroup),
+    partySize: Math.max(1, g.partySize || 1),
     inviteToken: g.inviteToken,
     invitationStatus: g.invitationStatus as InvitationStatus,
     rsvpStatus: g.rsvpStatus as RsvpStatus,
     rsvpNote: g.rsvpNote,
     rsvpUpdatedAt: g.rsvpUpdatedAt ? g.rsvpUpdatedAt.toISOString() : null,
+    plannedArrival: g.plannedArrival ? g.plannedArrival.toISOString() : null,
+    plannedDeparture: g.plannedDeparture ? g.plannedDeparture.toISOString() : null,
+    sharePlannedDates: g.sharePlannedDates,
     linkedUserId: g.linkedUserId,
     source: g.source as GuestSource,
     hasConflict: g.hasConflict,
@@ -288,6 +296,57 @@ export async function linkUserToMatchingGuestRecords(
     }
   }
 
+  // Also claim any pending Co-Admin or Close Family role invites matching this verified user
+  const pendingInvites = await prisma.eventRoleInvite.findMany({
+    where: { status: "pending" },
+  });
+  const rank: Record<string, number> = {
+    guest: 1,
+    close_family: 2,
+    co_admin: 3,
+    host: 4,
+    owner: 4,
+  };
+  for (const invite of pendingInvites) {
+    const matched =
+      (user.email && emailsMatch(invite.email, user.email)) ||
+      (user.phone && phonesMatch(invite.phone, user.phone));
+    if (!matched) continue;
+    const existingMembership = await prisma.eventMembership.findUnique({
+      where: {
+        weddingId_userId: { weddingId: invite.weddingId, userId: user.id },
+      },
+    });
+    const nextRole =
+      existingMembership &&
+      existingMembership.membershipStatus === "active" &&
+      (rank[existingMembership.role] || 0) >= (rank[invite.role] || 0)
+        ? existingMembership.role
+        : invite.role;
+    await prisma.eventMembership.upsert({
+      where: {
+        weddingId_userId: { weddingId: invite.weddingId, userId: user.id },
+      },
+      create: {
+        weddingId: invite.weddingId,
+        userId: user.id,
+        role: nextRole,
+        membershipStatus: "active",
+      },
+      update: {
+        role: nextRole,
+        membershipStatus: "active",
+      },
+    });
+    await prisma.eventRoleInvite.update({
+      where: { id: invite.id },
+      data: { status: "accepted" },
+    });
+    if (!newlyLinkedWeddings.includes(invite.weddingId)) {
+      newlyLinkedWeddings.push(invite.weddingId);
+    }
+  }
+
   return newlyLinkedWeddings;
 }
 
@@ -389,19 +448,42 @@ export async function upsertVerifiedUser(params: {
   };
 }
 
+export interface WeddingAccessResult {
+  wedding: WeddingDTO | null;
+  role: "host" | "guest" | "none";
+  detailedRole: EventAccessRole;
+  isOwner: boolean;
+  canManage: boolean;
+  canManageRoles: boolean;
+  canAccessFinances: boolean;
+  canAccessFamily: boolean;
+  canAccessSocial: boolean;
+  canViewUpdates: boolean;
+  guestRecord?: GuestDTO;
+}
+
+function emptyAccess(wedding: WeddingDTO | null): WeddingAccessResult {
+  return {
+    wedding,
+    role: "none",
+    detailedRole: "none",
+    isOwner: false,
+    canManage: false,
+    canManageRoles: false,
+    canAccessFinances: false,
+    canAccessFamily: false,
+    canAccessSocial: false,
+    canViewUpdates: false,
+  };
+}
+
 /**
- * FR-08: Server-side access control check for a wedding.
+ * FR-08: Server-side role-based access control check for a wedding.
  */
 export async function getWeddingAccess(
   weddingIdOrSlug: string,
   userId?: string | null
-): Promise<{
-  wedding: WeddingDTO | null;
-  role: "host" | "guest" | "none";
-  canManage: boolean;
-  canViewUpdates: boolean;
-  guestRecord?: GuestDTO;
-}> {
+): Promise<WeddingAccessResult> {
   const wedding = await prisma.wedding.findFirst({
     where: {
       OR: [{ id: weddingIdOrSlug }, { slug: weddingIdOrSlug }],
@@ -409,45 +491,36 @@ export async function getWeddingAccess(
   });
 
   if (!wedding) {
-    return {
-      wedding: null,
-      role: "none",
-      canManage: false,
-      canViewUpdates: false,
-    };
+    return emptyAccess(null);
   }
 
   const weddingDTO = mapWeddingToDTO(wedding);
 
   if (!userId) {
-    return {
-      wedding: weddingDTO,
-      role: "none",
-      canManage: false,
-      canViewUpdates: false,
-    };
+    return emptyAccess(weddingDTO);
   }
 
   if (wedding.ownerUserId === userId) {
     return {
       wedding: weddingDTO,
       role: "host",
+      detailedRole: "owner",
+      isOwner: true,
       canManage: true,
+      canManageRoles: true,
+      canAccessFinances: true,
+      canAccessFamily: true,
+      canAccessSocial: true,
       canViewUpdates: true,
     };
   }
 
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) {
-    return {
-      wedding: weddingDTO,
-      role: "none",
-      canManage: false,
-      canViewUpdates: false,
-    };
+    return emptyAccess(weddingDTO);
   }
 
-  const membership = await prisma.eventMembership.findUnique({
+  let membership = await prisma.eventMembership.findUnique({
     where: {
       weddingId_userId: {
         weddingId: wedding.id,
@@ -455,6 +528,50 @@ export async function getWeddingAccess(
       },
     },
   });
+
+  // Auto-claim pending role invites for this event if contact matches
+  const pendingInvites = await prisma.eventRoleInvite.findMany({
+    where: { weddingId: wedding.id, status: "pending" },
+  });
+  const matchingInvite = pendingInvites.find(
+    (inv) =>
+      (user.email && emailsMatch(inv.email, user.email)) ||
+      (user.phone && phonesMatch(inv.phone, user.phone))
+  );
+  if (matchingInvite) {
+    const rank: Record<string, number> = {
+      guest: 1,
+      close_family: 2,
+      co_admin: 3,
+      host: 4,
+      owner: 4,
+    };
+    const nextRole =
+      membership &&
+      membership.membershipStatus === "active" &&
+      (rank[membership.role] || 0) >= (rank[matchingInvite.role] || 0)
+        ? membership.role
+        : matchingInvite.role;
+    membership = await prisma.eventMembership.upsert({
+      where: {
+        weddingId_userId: { weddingId: wedding.id, userId: user.id },
+      },
+      create: {
+        weddingId: wedding.id,
+        userId: user.id,
+        role: nextRole,
+        membershipStatus: "active",
+      },
+      update: {
+        role: nextRole,
+        membershipStatus: "active",
+      },
+    });
+    await prisma.eventRoleInvite.update({
+      where: { id: matchingInvite.id },
+      data: { status: "accepted" },
+    });
+  }
 
   const weddingGuests = await prisma.guest.findMany({
     where: { weddingId: wedding.id },
@@ -476,7 +593,7 @@ export async function getWeddingAccess(
         where: { id: matchingGuest.id },
         data: { linkedUserId: user.id },
       });
-      await prisma.eventMembership.upsert({
+      membership = await prisma.eventMembership.upsert({
         where: {
           weddingId_userId: {
             weddingId: wedding.id,
@@ -497,22 +614,52 @@ export async function getWeddingAccess(
       });
     }
 
-    const isHostRole = membership?.role === "host";
+    const rawRole = membership?.membershipStatus === "active" ? membership.role : "guest";
+    const isCoAdmin = rawRole === "co_admin" || rawRole === "host";
+    const isCloseFamily = rawRole === "close_family";
+    const detailedRole: EventAccessRole = isCoAdmin
+      ? "co_admin"
+      : isCloseFamily
+      ? "close_family"
+      : "guest";
+
     return {
       wedding: weddingDTO,
-      role: isHostRole ? "host" : "guest",
-      canManage: isHostRole,
+      role: isCoAdmin ? "host" : "guest",
+      detailedRole,
+      isOwner: false,
+      canManage: isCoAdmin,
+      canManageRoles: false,
+      canAccessFinances: isCoAdmin,
+      canAccessFamily: isCoAdmin || isCloseFamily,
+      canAccessSocial: true,
       canViewUpdates: true,
       guestRecord: matchingGuest ? mapGuestToDTO(matchingGuest) : undefined,
     };
   }
 
-  return {
-    wedding: weddingDTO,
-    role: "none",
-    canManage: false,
-    canViewUpdates: false,
-  };
+  return emptyAccess(weddingDTO);
+}
+
+async function assertCanManageWedding(
+  weddingId: string,
+  userId: string,
+  forbiddenMessage: string
+): Promise<Wedding> {
+  const wedding = await prisma.wedding.findUnique({ where: { id: weddingId } });
+  if (!wedding) throw new Error("Wedding event not found.");
+  if (wedding.ownerUserId === userId) return wedding;
+  const membership = await prisma.eventMembership.findUnique({
+    where: { weddingId_userId: { weddingId, userId } },
+  });
+  if (
+    membership &&
+    membership.membershipStatus === "active" &&
+    (membership.role === "co_admin" || membership.role === "host")
+  ) {
+    return wedding;
+  }
+  throw new Error(forbiddenMessage);
 }
 
 async function generateUniqueWeddingSlug(
@@ -542,6 +689,7 @@ async function generateUniqueWeddingSlug(
 export async function createWedding(params: {
   eventType?: string;
   otherEventType?: string;
+  moodTheme?: string;
   ownerUserId: string;
   coupleNames?: string;
   eventTitle: string;
@@ -554,6 +702,7 @@ export async function createWedding(params: {
   if (!EVENT_TYPES.includes(eventType)) throw new Error("Choose a valid event type.");
   const otherEventType = params.otherEventType?.trim() || "";
   if (eventType === "Other" && !otherEventType) throw new Error("Name your event type.");
+  const moodTheme = normalizeEventMood(params.moodTheme);
   const coupleNames = eventType === "Wedding" ? (params.coupleNames?.trim() || "") : params.eventTitle.trim();
   const eventTitle = params.eventTitle.trim();
   const venue = params.venue.trim();
@@ -595,6 +744,7 @@ export async function createWedding(params: {
         slug,
         eventType,
         otherEventType,
+        moodTheme,
         ownerUserId: params.ownerUserId,
         coupleNames,
         eventTitle,
@@ -643,13 +793,14 @@ function applyCoupleNameUpdates(
 }
 
 /**
- * FR-02: Edit wedding details (Owner only).
+ * FR-02: Edit wedding details (Owner or Co-Admin).
  */
 export async function updateWedding(
   weddingId: string,
-  ownerUserId: string,
+  actorUserId: string,
   updates: {
     setup?: unknown;
+    moodTheme?: string;
     groomName?: string;
     brideName?: string;
     coupleNames?: string;
@@ -660,20 +811,15 @@ export async function updateWedding(
     description?: string;
   }
 ): Promise<WeddingDTO> {
-  const wedding = await prisma.wedding.findUnique({
-    where: { id: weddingId },
-  });
-  if (!wedding) {
-    throw new Error("Wedding event not found.");
-  }
-  if (wedding.ownerUserId !== ownerUserId) {
-    throw new Error(
-      "Forbidden: Only the event owner can edit wedding details."
-    );
-  }
+  const wedding = await assertCanManageWedding(
+    weddingId,
+    actorUserId,
+    "Forbidden: Only event organizers can edit event details."
+  );
 
   const dataToUpdate: {
     setupDetails?: string;
+    moodTheme?: string;
     coupleNames?: string;
     eventTitle?: string;
     date?: Date;
@@ -681,6 +827,10 @@ export async function updateWedding(
     venue?: string;
     description?: string | null;
   } = {};
+
+  if (updates.moodTheme !== undefined) {
+    dataToUpdate.moodTheme = normalizeEventMood(updates.moodTheme);
+  }
 
   if (updates.coupleNames !== undefined) {
     const val = updates.coupleNames.trim();
@@ -774,6 +924,8 @@ export async function addGuestsToWedding(params: {
     name: string;
     email?: string | null;
     phone?: string | null;
+    guestGroup?: string;
+    partySize?: number;
   }>;
   skipDuplicates?: boolean;
 }): Promise<{
@@ -784,17 +936,11 @@ export async function addGuestsToWedding(params: {
     reason: string;
   }>;
 }> {
-  const wedding = await prisma.wedding.findUnique({
-    where: { id: params.weddingId },
-  });
-  if (!wedding) {
-    throw new Error("Wedding event not found.");
-  }
-  if (wedding.ownerUserId !== params.ownerUserId) {
-    throw new Error(
-      "Forbidden: Only the event owner can manage the guest list."
-    );
-  }
+  const wedding = await assertCanManageWedding(
+    params.weddingId,
+    params.ownerUserId,
+    "Forbidden: Only event organizers can manage the guest list."
+  );
 
   const choices = invitationOptions(mapWeddingToDTO(wedding));
   if (params.invitationKey && !choices.some(option => option.key === params.invitationKey)) throw new Error("Select an available invitation card for these guests.");
@@ -852,6 +998,12 @@ export async function addGuestsToWedding(params: {
         (phone && phonesMatch(u.phone, phone))
     );
 
+    const partySize =
+      typeof raw.partySize === "number" && Number.isFinite(raw.partySize)
+        ? Math.min(20, Math.max(1, Math.round(raw.partySize)))
+        : 1;
+    const guestGroup = normalizeGuestGroup(raw.guestGroup);
+
     const createdGuest = await prisma.guest.create({
       data: {
         weddingId: wedding.id,
@@ -859,6 +1011,8 @@ export async function addGuestsToWedding(params: {
         name,
         email,
         phone,
+        guestGroup,
+        partySize,
         inviteToken: `inv_${crypto.randomBytes(8).toString("hex")}`,
         invitationStatus: "not_shared",
         rsvpStatus: "pending",
@@ -927,6 +1081,15 @@ export async function addGuestsToWedding(params: {
  * FR-05: Submit or update an RSVP from a guest (before or after registration).
  * Links to the correct guest record and safely flags conflicting records so no RSVP data is lost.
  */
+function parseOptionalDate(value?: string | null): Date | null {
+  if (!value || !value.trim()) return null;
+  const parsed = new Date(value);
+  if (isNaN(parsed.getTime())) {
+    throw new Error("Please select a valid planned attendance date.");
+  }
+  return parsed;
+}
+
 export async function submitGuestRsvp(params: {
   weddingSlugOrId: string;
   invitationKey?: string;
@@ -936,6 +1099,10 @@ export async function submitGuestRsvp(params: {
   phone?: string | null;
   rsvpStatus: RsvpStatus;
   rsvpNote?: string | null;
+  partySize?: number;
+  plannedArrival?: string | null;
+  plannedDeparture?: string | null;
+  sharePlannedDates?: boolean;
   authenticatedUserId?: string | null;
 }): Promise<{
   guest: GuestDTO;
@@ -944,6 +1111,34 @@ export async function submitGuestRsvp(params: {
   if (!["yes", "no", "maybe"].includes(params.rsvpStatus)) {
     throw new Error("RSVP response must be Yes, No, or Maybe.");
   }
+
+  const parsedArrival =
+    params.rsvpStatus === "no" ? null : parseOptionalDate(params.plannedArrival);
+  const parsedDeparture =
+    params.rsvpStatus === "no" ? null : parseOptionalDate(params.plannedDeparture);
+  if (
+    parsedArrival &&
+    parsedDeparture &&
+    parsedDeparture.getTime() < parsedArrival.getTime()
+  ) {
+    throw new Error("Planned departure date must be on or after arrival date.");
+  }
+  const safePartySize =
+    typeof params.partySize === "number" && Number.isFinite(params.partySize)
+      ? Math.min(20, Math.max(1, Math.round(params.partySize)))
+      : undefined;
+  const plannedFields = {
+    ...(safePartySize !== undefined ? { partySize: safePartySize } : {}),
+    ...(params.plannedArrival !== undefined || params.rsvpStatus === "no"
+      ? { plannedArrival: parsedArrival }
+      : {}),
+    ...(params.plannedDeparture !== undefined || params.rsvpStatus === "no"
+      ? { plannedDeparture: parsedDeparture }
+      : {}),
+    ...(params.sharePlannedDates !== undefined
+      ? { sharePlannedDates: Boolean(params.sharePlannedDates) }
+      : {}),
+  };
 
   const cleanName = params.name.trim();
   const cleanEmail = normalizeEmail(params.email);
@@ -1056,6 +1251,7 @@ export async function submitGuestRsvp(params: {
           rsvpNote: params.rsvpNote?.trim() || null,
           rsvpUpdatedAt: now,
           invitationStatus: "responded",
+          ...plannedFields,
           ...(params.authenticatedUserId
             ? { linkedUserId: params.authenticatedUserId }
             : {}),
@@ -1073,6 +1269,7 @@ export async function submitGuestRsvp(params: {
         rsvpNote: params.rsvpNote?.trim() || null,
         rsvpUpdatedAt: now,
         invitationStatus: "responded",
+        ...plannedFields,
         ...(params.authenticatedUserId
           ? { linkedUserId: params.authenticatedUserId }
           : {}),
@@ -1086,6 +1283,10 @@ export async function submitGuestRsvp(params: {
         name: cleanName,
         email: cleanEmail,
         phone: cleanPhone,
+        partySize: safePartySize ?? 1,
+        plannedArrival: parsedArrival,
+        plannedDeparture: parsedDeparture,
+        sharePlannedDates: params.sharePlannedDates ?? true,
         inviteToken: `inv_${crypto.randomBytes(8).toString("hex")}`,
         invitationStatus: "responded",
         rsvpStatus: params.rsvpStatus,
@@ -1146,14 +1347,11 @@ export async function resolveGuestConflict(params: {
   guestId: string;
   resolution: "accept_incoming" | "keep_original" | "split_into_new_guest";
 }): Promise<GuestDTO> {
-  const wedding = await prisma.wedding.findUnique({
-    where: { id: params.weddingId },
-  });
-  if (!wedding || wedding.ownerUserId !== params.ownerUserId) {
-    throw new Error(
-      "Forbidden: Only the event owner can resolve guest conflicts."
-    );
-  }
+  const wedding = await assertCanManageWedding(
+    params.weddingId,
+    params.ownerUserId,
+    "Forbidden: Only event organizers can resolve guest conflicts."
+  );
 
   const guest = await prisma.guest.findFirst({
     where: { id: params.guestId, weddingId: wedding.id },
@@ -1237,17 +1435,11 @@ export async function createEventUpdate(params: {
   category?: UpdateCategory;
   isPinned?: boolean;
 }): Promise<EventUpdateDTO> {
-  const wedding = await prisma.wedding.findUnique({
-    where: { id: params.weddingId },
-  });
-  if (!wedding) {
-    throw new Error("Wedding event not found.");
-  }
-  if (wedding.ownerUserId !== params.authorUserId) {
-    throw new Error(
-      "Forbidden: Only the wedding host can publish event updates."
-    );
-  }
+  const wedding = await assertCanManageWedding(
+    params.weddingId,
+    params.authorUserId,
+    "Forbidden: Only event organizers can publish event updates."
+  );
 
   const textContent = params.textContent.trim();
   if (!textContent) {
@@ -1290,12 +1482,11 @@ export async function editEventUpdate(params: {
   category?: UpdateCategory;
   isPinned?: boolean;
 }): Promise<EventUpdateDTO> {
-  const wedding = await prisma.wedding.findUnique({
-    where: { id: params.weddingId },
-  });
-  if (!wedding || wedding.ownerUserId !== params.authorUserId) {
-    throw new Error("Forbidden: Only the wedding host can edit event updates.");
-  }
+  const wedding = await assertCanManageWedding(
+    params.weddingId,
+    params.authorUserId,
+    "Forbidden: Only event organizers can edit event updates."
+  );
 
   const existing = await prisma.eventUpdate.findFirst({
     where: { id: params.updateId, weddingId: wedding.id },
@@ -1328,14 +1519,11 @@ export async function removeEventUpdate(params: {
   updateId: string;
   authorUserId: string;
 }): Promise<void> {
-  const wedding = await prisma.wedding.findUnique({
-    where: { id: params.weddingId },
-  });
-  if (!wedding || wedding.ownerUserId !== params.authorUserId) {
-    throw new Error(
-      "Forbidden: Only the wedding host can remove event updates."
-    );
-  }
+  const wedding = await assertCanManageWedding(
+    params.weddingId,
+    params.authorUserId,
+    "Forbidden: Only event organizers can remove event updates."
+  );
 
   await prisma.eventUpdate.deleteMany({
     where: { id: params.updateId, weddingId: wedding.id },

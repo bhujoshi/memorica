@@ -27,8 +27,27 @@ async function buildUserDashboardSummary(userId: string) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) return null;
 
-  const ownedWeddings = await prisma.wedding.findMany({
-    where: { ownerUserId: user.id },
+  // Claim any pending Co-Admin / Close Family role invites on session load
+  await linkUserToMatchingGuestRecords(user);
+
+  const activeMemberships = await prisma.eventMembership.findMany({
+    where: {
+      userId: user.id,
+      membershipStatus: "active",
+    },
+  });
+
+  const coAdminWeddingIds = activeMemberships
+    .filter((m) => m.role === "co_admin" || m.role === "host")
+    .map((m) => m.weddingId);
+
+  const managedWeddings = await prisma.wedding.findMany({
+    where: {
+      OR: [
+        { ownerUserId: user.id },
+        ...(coAdminWeddingIds.length ? [{ id: { in: coAdminWeddingIds } }] : []),
+      ],
+    },
     orderBy: { createdAt: "desc" },
     include: {
       guests: true,
@@ -36,12 +55,19 @@ async function buildUserDashboardSummary(userId: string) {
     },
   });
 
-  const hostedWeddings = ownedWeddings.map((w) => {
+  const managedIds = new Set(managedWeddings.map((w) => w.id));
+
+  const hostedWeddings = managedWeddings.map((w) => {
     const dto = mapWeddingToDTO(w);
     return {
       ...dto,
+      myRole: (w.ownerUserId === user.id ? "owner" : "co_admin") as
+        | "owner"
+        | "co_admin",
       stats: {
         totalGuests: w.guests.length,
+        invitedCount: w.guests.filter((g) => g.invitationStatus !== "not_shared").length,
+        remainingCount: w.guests.filter((g) => g.invitationStatus === "not_shared").length,
         yesCount: w.guests.filter((g) => g.rsvpStatus === "yes").length,
         noCount: w.guests.filter((g) => g.rsvpStatus === "no").length,
         maybeCount: w.guests.filter((g) => g.rsvpStatus === "maybe").length,
@@ -53,17 +79,15 @@ async function buildUserDashboardSummary(userId: string) {
     };
   });
 
-  const memberships = await prisma.eventMembership.findMany({
-    where: {
-      userId: user.id,
-      role: "guest",
-      membershipStatus: "active",
-    },
-  });
+  const membershipByWedding = new Map(
+    activeMemberships.map((m) => [m.weddingId, m])
+  );
 
   const allGuests = await prisma.guest.findMany();
   const matchedGuestWeddingIds = new Set<string>(
-    memberships.map((m) => m.weddingId)
+    activeMemberships
+      .filter((m) => m.role === "guest" || m.role === "close_family")
+      .map((m) => m.weddingId)
   );
 
   for (const g of allGuests) {
@@ -74,6 +98,10 @@ async function buildUserDashboardSummary(userId: string) {
     ) {
       matchedGuestWeddingIds.add(g.weddingId);
     }
+  }
+
+  for (const mid of Array.from(managedIds)) {
+    matchedGuestWeddingIds.delete(mid);
   }
 
   const invitedWeddingRows =
@@ -98,8 +126,14 @@ async function buildUserDashboardSummary(userId: string) {
         (user.email && emailsMatch(g.email, user.email)) ||
         (user.phone && phonesMatch(g.phone, user.phone))
     );
+    const mem = membershipByWedding.get(w.id);
+    const isCloseFamily = mem?.role === "close_family";
     return {
       ...mapWeddingToDTO(w),
+      myRole: (isCloseFamily ? "close_family" : "guest") as
+        | "close_family"
+        | "guest",
+      canAccessFamily: isCloseFamily,
       myRsvpStatus: (guestRecord?.rsvpStatus || "pending") as
         | "pending"
         | "yes"

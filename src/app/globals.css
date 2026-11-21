@@ -59,7 +59,20 @@ input[type="checkbox"], input[type="radio"] { accent-color: #047857; }
 .celebration-empty > svg { margin:0 auto 14px; color:#10b981; }
 .celebration-empty h3 { font-family:Georgia,serif; font-size:21px; }
 .celebration-empty p { margin-top:8px; font-size:13px; color:#78716c; }
-.event-hero { background:linear-gradient(125deg,#ffffff,#ecfdf5); box-shadow:0 5px 22px #04785707; }
+.event-hero { background:linear-gradient(125deg,#ffffff,var(--mood-soft, #ecfdf5)); border-color: var(--mood-border, #a7f3d0); box-shadow:0 5px 22px #04785707; }
+/* Indian Celebration Mood Accents (WCAG AA contrast preserved) */
+.mood-emerald { --mood-accent:#047857; --mood-deep:#064e3b; --mood-soft:#ecfdf5; --mood-border:#a7f3d0; }
+.mood-haldi { --mood-accent:#b45309; --mood-deep:#78350f; --mood-soft:#fffbeb; --mood-border:#fde68a; }
+.mood-mehndi { --mood-accent:#15803d; --mood-deep:#14532d; --mood-soft:#f0fdf4; --mood-border:#bbf7d0; }
+.mood-sangeet { --mood-accent:#4338ca; --mood-deep:#312e81; --mood-soft:#eef2ff; --mood-border:#c7d2fe; }
+.mood-reception { --mood-accent:#92400e; --mood-deep:#63361f; --mood-soft:#fdfbf7; --mood-border:#edd89a; }
+.mood-hero { background: linear-gradient(135deg, var(--mood-deep, #064e3b) 0%, var(--mood-accent, #047857) 58%, var(--mood-deep, #065f46) 100%); color: #ffffff; }
+.mood-surface { background: linear-gradient(135deg, #ffffff 0%, var(--mood-soft, #ecfdf5) 100%); border-color: var(--mood-border, #a7f3d0); }
+.mood-badge { background: var(--mood-soft, #ecfdf5); color: var(--mood-deep, #065f46); border: 1px solid var(--mood-border, #a7f3d0); }
+.mood-button { background: var(--mood-accent, #047857); color: #ffffff; }
+.mood-button:hover { background: var(--mood-deep, #065f46); }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 .event-setup-section > summary { list-style:none; min-height:32px; }
 .event-setup-section > summary::-webkit-details-marker { display:none; }
 .event-setup-section > summary::after { content:'+'; font-size:22px; color:#047857; line-height:1; flex-shrink:0; font-weight:400; }

@@ -3,7 +3,7 @@
 import React, { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
-import { Heart, Lock, Sparkles } from "lucide-react";
+import { Lock, Sparkles } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -18,9 +18,11 @@ export default function LoginPage() {
   return (
     <div className="mx-auto max-w-md px-4 py-16">
       <div className="rounded-3xl border border-stone-200 bg-white p-8 text-center shadow-sm space-y-5">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-700 text-white">
-          <Heart className="h-6 w-6 fill-current" />
-        </div>
+        <img
+          src="/illustrations/invite-envelope.jpg"
+          alt="Indian festive emerald invitation envelope with marigold blooms and glowing brass diya"
+          className="mx-auto h-36 w-auto object-contain mix-blend-multiply"
+        />
         <div className="space-y-1.5">
           <h1 className="font-serif text-2xl font-bold text-stone-900">
             Welcome to Memorica

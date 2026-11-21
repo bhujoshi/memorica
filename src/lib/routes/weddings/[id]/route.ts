@@ -66,7 +66,12 @@ export async function GET(
     return NextResponse.json({
       wedding,
       role: "host",
+      detailedRole: access.detailedRole,
+      isOwner: access.isOwner,
       canManage: true,
+      canAccessFinances: access.canAccessFinances,
+      canAccessFamily: access.canAccessFamily,
+      canAccessSocial: access.canAccessSocial,
       guests: guestRows.map(mapGuestToDTO),
       updates: updateRows.map(mapUpdateToDTO),
       analytics: analyticsRows.map(mapAnalyticsToDTO),
@@ -85,7 +90,12 @@ export async function GET(
   return NextResponse.json({
     wedding,
     role: "guest",
+    detailedRole: access.detailedRole,
+    isOwner: false,
     canManage: false,
+    canAccessFinances: false,
+    canAccessFamily: access.canAccessFamily,
+    canAccessSocial: access.canAccessSocial,
     guestRecord: access.guestRecord,
     updates: updateRows.map(mapUpdateToDTO),
   });
@@ -146,7 +156,7 @@ export async function DELETE(
   if (!access.wedding) {
     return NextResponse.json({ error: "Wedding not found" }, { status: 404 });
   }
-  if (!access.canManage) {
+  if (!access.isOwner) {
     return NextResponse.json(
       { error: "Forbidden: Only the event owner can delete a wedding." },
       { status: 403 }

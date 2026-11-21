@@ -13,10 +13,19 @@ export interface UserDTO {
 }
 
 import type { EventSetup } from "./event-setup";
+import type { EventMoodId, GuestGroupId, SocialReactionId } from "./format";
+
+export type EventAccessRole =
+  | "owner"
+  | "co_admin"
+  | "close_family"
+  | "guest"
+  | "none";
 
 export interface WeddingDTO {
   eventType: string;
   otherEventType: string;
+  moodTheme: EventMoodId;
   setup: EventSetup;
   id: string;
   slug: string;
@@ -102,11 +111,16 @@ export interface GuestDTO {
   name: string;
   email: string | null;
   phone: string | null;
+  guestGroup: GuestGroupId;
+  partySize: number;
   inviteToken: string;
   invitationStatus: InvitationStatus;
   rsvpStatus: RsvpStatus;
   rsvpNote: string | null;
   rsvpUpdatedAt: string | null;
+  plannedArrival: string | null;
+  plannedDeparture: string | null;
+  sharePlannedDates: boolean;
   linkedUserId: string | null;
   source: GuestSource;
   hasConflict: boolean;
@@ -158,4 +172,144 @@ export interface AnalyticsEventDTO {
   summary: string;
   metadata: Record<string, string | number | boolean>;
   createdAt: string;
+}
+
+export interface TeamMemberDTO {
+  userId: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  avatarUrl: string | null;
+  role: "owner" | "co_admin" | "close_family" | "guest";
+  joinedAt: string;
+}
+
+export interface RoleInviteDTO {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  role: "co_admin" | "close_family";
+  status: "pending" | "accepted" | "revoked";
+  createdAt: string;
+}
+
+export interface SocialCommentDTO {
+  id: string;
+  postId: string;
+  authorUserId: string;
+  authorName: string;
+  authorAvatarUrl: string | null;
+  content: string;
+  createdAt: string;
+}
+
+export interface SocialPostDTO {
+  id: string;
+  weddingId: string;
+  authorUserId: string;
+  authorName: string;
+  authorAvatarUrl: string | null;
+  space: "social" | "family";
+  kind: "moment" | "wish" | "plan" | "photo";
+  content: string;
+  mediaAssetId: string | null;
+  isPinned: boolean;
+  createdAt: string;
+  reactions: Record<SocialReactionId, number>;
+  myReactions: SocialReactionId[];
+  comments: SocialCommentDTO[];
+}
+
+export interface PlannedGuestAttendanceDTO {
+  id: string;
+  name: string;
+  rsvpStatus: RsvpStatus;
+  partySize: number;
+  guestGroup: GuestGroupId;
+  plannedArrival: string | null;
+  plannedDeparture: string | null;
+  rsvpNote: string | null;
+}
+
+export interface SharedPhotoDTO {
+  id: string;
+  weddingId: string;
+  uploaderUserId: string;
+  uploaderName: string;
+  albumName: string;
+  caption: string | null;
+  assetId: string;
+  createdAt: string;
+}
+
+export interface FamilyPollOptionDTO {
+  id: string;
+  label: string;
+  voteCount: number;
+  votedByMe: boolean;
+  voters: string[];
+}
+
+export interface FamilyPollDTO {
+  id: string;
+  weddingId: string;
+  creatorUserId: string;
+  creatorName: string;
+  question: string;
+  category: string;
+  allowMultiple: boolean;
+  isClosed: boolean;
+  totalVotes: number;
+  totalVoters: number;
+  createdAt: string;
+  options: FamilyPollOptionDTO[];
+}
+
+export interface FamilyTaskDTO {
+  id: string;
+  weddingId: string;
+  creatorUserId: string;
+  creatorName: string;
+  title: string;
+  assigneeName: string | null;
+  category: string;
+  status: "todo" | "in_progress" | "done";
+  dueDate: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BudgetItemDTO {
+  id: string;
+  weddingId: string;
+  category: string;
+  title: string;
+  estimatedAmount: number;
+  actualAmount: number;
+  paidAmount: number;
+  paidBy: string | null;
+  paymentStatus: "planned" | "partial" | "paid";
+  dueDate: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VendorBookingDTO {
+  id: string;
+  weddingId: string;
+  category: string;
+  vendorName: string;
+  contactName: string | null;
+  contactPhone: string | null;
+  status: "shortlisted" | "booked" | "advance_paid" | "fully_paid" | "cancelled";
+  totalAmount: number;
+  advancePaid: number;
+  balanceDueDate: string | null;
+  eventDay: string | null;
+  notes: string | null;
+  receiptAssetId: string | null;
+  createdAt: string;
+  updatedAt: string;
 }

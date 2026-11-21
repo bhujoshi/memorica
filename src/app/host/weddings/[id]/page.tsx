@@ -1,10 +1,23 @@
 "use client";
-import MobileEventNav from "@/components/MobileEventNav";
+import MobileEventNav, { HostTab } from "@/components/MobileEventNav";
 import GuestInvitationActions from "@/components/GuestInvitationActions";
 import WhatsAppInvitations from "@/components/WhatsAppInvitations";
 import EventCreatedCelebration from "@/components/EventCreatedCelebration";
 import EventSetupForm, { MediaPreview } from "@/components/EventSetupForm";
+import InviteProgressTracker from "@/components/guests/InviteProgressTracker";
+import TeamAccessManager from "@/components/roles/TeamAccessManager";
+import CelebrationSocialHub from "@/components/social/CelebrationSocialHub";
+import CloseFamilyRoom from "@/components/family/CloseFamilyRoom";
+import FinancePlanner from "@/components/organizer/FinancePlanner";
+import VendorBookingsManager from "@/components/organizer/VendorBookingsManager";
 import { missingEventDetails, invitationOptions } from "@/lib/event-setup";
+import {
+  GUEST_GROUPS,
+  GuestGroupId,
+  formatCountdownLabel,
+  formatShortDate,
+  guestGroupLabel,
+} from "@/lib/format";
 
 
 import DateInput from "@/components/DateInput";
@@ -19,7 +32,6 @@ import {
   UpdateCategory,
   WeddingDTO,
   encodeUserHintHeader,
-  formatWeddingDate,
   formatWeddingDateRange,
 } from "@/lib/types";
 import {
@@ -28,12 +40,12 @@ import {
   BarChart3,
   Bell,
   BookUser,
+  Briefcase,
   Calendar,
-  Check,
   CheckCircle2,
-  Copy,
   Edit3,
   ExternalLink,
+  HeartHandshake,
   Lock,
   MapPin,
   Pin,
@@ -41,6 +53,7 @@ import {
   Search,
   Send,
   Share2,
+  ShieldCheck,
   Smartphone,
   Sparkles,
   Trash2,
@@ -48,10 +61,9 @@ import {
   UserCheck,
   UserPlus,
   Users,
+  Wallet,
   X,
 } from "lucide-react";
-
-type HostTab = "setup" | "guests" | "share" | "updates" | "overview" | "analytics";
 
 interface ImportPreviewItem {
   tempId: string;
@@ -70,7 +82,19 @@ export default function HostWeddingWorkspacePage() {
   const { user, openAuthModal, refreshAuth } = useAuth();
 
   const [activeTab, setActiveTab] = useState<HostTab>("setup");
+  const tabContentRef = useRef<HTMLDivElement>(null);
+  const handleMobileTabSelect = useCallback((tab: HostTab) => {
+    setActiveTab(tab);
+    requestAnimationFrame(() => {
+      tabContentRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }, []);
   const [wedding, setWedding] = useState<WeddingDTO | null>(null);
+  const [isOwner, setIsOwner] = useState(false);
+  const [myRoleLabel, setMyRoleLabel] = useState<"Owner" | "Co-Admin">("Owner");
   const [guests, setGuests] = useState<GuestDTO[]>([]);
   const [updates, setUpdates] = useState<EventUpdateDTO[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsEventDTO[]>([]);
@@ -123,6 +147,8 @@ export default function HostWeddingWorkspacePage() {
   const [manualName, setManualName] = useState("");
   const [manualEmail, setManualEmail] = useState("");
   const [manualPhone, setManualPhone] = useState("");
+  const [manualGroup, setManualGroup] = useState<GuestGroupId>("groom_side");
+  const [manualPartySize, setManualPartySize] = useState(1);
   const [selectedGuestIds, setSelectedGuestIds] = useState<string[]>([]);
   const [whatsAppGuestId, setWhatsAppGuestId] = useState("");
   const [shareRequest, setShareRequest] = useState<{guest?: GuestDTO; mode: "copy" | "web_share" | "whatsapp"} | null>(null);
@@ -145,8 +171,9 @@ export default function HostWeddingWorkspacePage() {
 
   // Guest list filtering
   const [guestSearch, setGuestSearch] = useState("");
+  const [groupFilter, setGroupFilter] = useState<GuestGroupId | "all">("all");
   const [rsvpFilter, setRsvpFilter] = useState<
-    "all" | "yes" | "maybe" | "no" | "pending" | "conflicts"
+    "all" | "remaining" | "invited" | "yes" | "maybe" | "no" | "pending" | "conflicts"
   >("all");
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -182,12 +209,14 @@ export default function HostWeddingWorkspacePage() {
       }
       if (!data.canManage) {
         setAccessError(
-          "Only the owner of this wedding event can manage its settings, guest list, and updates."
+          "Only event organizers (Owner or Co-Admins) can manage this celebration workspace."
         );
         return;
       }
 
       syncUpdatedWedding(data.wedding);
+      setIsOwner(Boolean(data.isOwner));
+      setMyRoleLabel(data.detailedRole === "co_admin" ? "Co-Admin" : "Owner");
       setGuests(data.guests || []);
       setUpdates(data.updates || []);
       setAnalytics(data.analytics || []);
@@ -303,6 +332,8 @@ export default function HostWeddingWorkspacePage() {
               name: manualName,
               email: manualEmail || undefined,
               phone: manualPhone || undefined,
+              guestGroup: manualGroup,
+              partySize: manualPartySize,
             },
           ],
         }),
@@ -314,6 +345,7 @@ export default function HostWeddingWorkspacePage() {
       setManualName("");
       setManualEmail("");
       setManualPhone("");
+      setManualPartySize(1);
       await loadWorkspace();
       await refreshAuth();
 
@@ -765,11 +797,22 @@ export default function HostWeddingWorkspacePage() {
   }
 
   const conflictGuests = guests.filter((g) => Boolean(g.hasConflict && g.conflict));
+  const remainingGuestsCount = guests.filter(
+    (g) => g.invitationStatus === "not_shared"
+  ).length;
+  const invitedGuestsCount = guests.length - remainingGuestsCount;
+
   const filteredGuests = guests.filter((g) => {
+    if (groupFilter !== "all" && g.guestGroup !== groupFilter) return false;
+    if (rsvpFilter === "remaining" && g.invitationStatus !== "not_shared") {
+      return false;
+    }
+    if (rsvpFilter === "invited" && g.invitationStatus === "not_shared") {
+      return false;
+    }
     if (rsvpFilter === "conflicts" && !g.hasConflict) return false;
     if (
-      rsvpFilter !== "all" &&
-      rsvpFilter !== "conflicts" &&
+      !["all", "remaining", "invited", "conflicts"].includes(rsvpFilter) &&
       g.rsvpStatus !== rsvpFilter
     ) {
       return false;
@@ -800,7 +843,7 @@ export default function HostWeddingWorkspacePage() {
   };
 
   return (
-    <div className={`event-workspace mx-auto max-w-6xl px-4 pt-5 sm:py-8 space-y-5 ${activeTab === "guests" && selectedGuestIds.length ? "pb-56" : "pb-28"}`}>
+    <div className={`event-workspace mood-${wedding.moodTheme} mx-auto max-w-6xl px-4 pt-5 sm:py-8 space-y-5 ${activeTab === "guests" && selectedGuestIds.length ? "pb-56" : "pb-28"}`}>
       {toast && (
         <div
           className={`fixed bottom-28 left-4 right-4 sm:bottom-5 sm:left-auto sm:right-5 z-[70] max-w-md rounded-2xl border p-4 shadow-xl flex items-start gap-3 transition-all ${
@@ -824,15 +867,18 @@ export default function HostWeddingWorkspacePage() {
       )}
 
       <EventCreatedCelebration eventId={wedding.id} />
-      <MobileEventNav active={activeTab} ready={!missingEventDetails(wedding).length} onSelect={setActiveTab}/>
+      <MobileEventNav active={activeTab} ready={!missingEventDetails(wedding).length} onSelect={handleMobileTabSelect}/>
       {/* Header Banner */}
       <div className="event-hero rounded-3xl border border-rose-200 p-4 sm:p-6 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 border border-rose-200 px-2.5 py-0.5 text-[11px] font-semibold text-rose-800">
+              <span className="mood-badge inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold">
                 <Sparkles className="h-3 w-3" />
-                {wedding.eventType === "Other" ? wedding.otherEventType : wedding.eventType} · Host Dashboard
+                {wedding.eventType === "Other" ? wedding.otherEventType : wedding.eventType} · {myRoleLabel}
+              </span>
+              <span className="rounded-full bg-amber-50 border border-amber-200 px-2.5 py-0.5 text-[11px] font-bold text-amber-900">
+                {formatCountdownLabel(wedding.date, wedding.endDate)}
               </span>
               <span className="hidden sm:inline text-xs text-stone-400 font-mono">
                 /invite/{wedding.slug}
@@ -856,18 +902,32 @@ export default function HostWeddingWorkspacePage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href={`/events/${wedding.slug}/social`}
+              className="mood-button inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-semibold transition shadow-sm"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              Celebration Page
+            </Link>
+            <Link
+              href={`/events/${wedding.slug}/family`}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2 text-xs font-semibold text-amber-950 hover:bg-amber-100 transition"
+            >
+              <HeartHandshake className="h-3.5 w-3.5 text-amber-700" />
+              Close Family
+            </Link>
             {missingEventDetails(wedding).length === 0 && <><Link
               href={`/invite/${wedding.slug}`}
               className="inline-flex items-center gap-1.5 rounded-xl border border-stone-200 bg-stone-50 px-3.5 py-2 text-xs font-semibold text-stone-800 hover:bg-stone-100 transition"
             >
-              View Public Invitation
+              Public Invitation
               <ExternalLink className="h-3.5 w-3.5" />
             </Link>
             <Link
               href={`/events/${wedding.slug}/updates`}
               className="inline-flex items-center gap-1.5 rounded-xl border border-stone-200 bg-stone-50 px-3.5 py-2 text-xs font-semibold text-stone-800 hover:bg-stone-100 transition"
             >
-              Guest Updates Feed
+              Updates
               <Bell className="h-3.5 w-3.5 text-rose-700" />
             </Link></>}
           </div>
@@ -896,11 +956,11 @@ export default function HostWeddingWorkspacePage() {
               {stats.maybe}
             </div>
           </div>
-          <div className="hidden sm:block rounded-xl bg-rose-50/70 px-3.5 py-2.5 border border-rose-200/70">
-            <div className="text-[11px] text-rose-700 font-medium">
+          <div className="hidden sm:block rounded-xl bg-stone-100/80 px-3.5 py-2.5 border border-stone-200/80">
+            <div className="text-[11px] text-stone-600 font-medium">
               Declined (No)
             </div>
-            <div className="text-lg font-bold text-rose-900">{stats.no}</div>
+            <div className="text-lg font-bold text-stone-800">{stats.no}</div>
           </div>
           <div className="rounded-xl bg-stone-50 px-3.5 py-2.5 border border-stone-200/70 hidden sm:block">
             <div className="text-[11px] text-stone-500">
@@ -912,36 +972,90 @@ export default function HostWeddingWorkspacePage() {
           </div>
         </div>
 
-        <div className="hidden sm:flex overflow-x-auto gap-1.5 pt-2 border-t border-stone-100 no-scrollbar">
+        <div className="hidden sm:flex flex-wrap gap-1.5 pt-2 border-t border-stone-100">
           {[
-            { id: "setup" as HostTab, label: "Complete Event Details", icon: Edit3, badge: null },
-            {
-              id: "share" as HostTab,
-              label: "Invitation Card & Share",
-              icon: Share2,
-            },
+            { id: "setup" as HostTab, label: "Setup", icon: Edit3, badge: null },
             {
               id: "guests" as HostTab,
-              label: `Invite Contacts (${guests.length})`,
+              label: `Guests (${guests.length})`,
               icon: Users,
-              badge: conflictGuests.length > 0 ? conflictGuests.length : null,
+              badge:
+                conflictGuests.length > 0
+                  ? conflictGuests.length
+                  : remainingGuestsCount > 0
+                  ? remainingGuestsCount
+                  : null,
+            },
+            {
+              id: "share" as HostTab,
+              label: "Share & WhatsApp",
+              icon: Share2,
+              badge: null,
+            },
+            {
+              id: "social" as HostTab,
+              label: "Social & Photos",
+              icon: Sparkles,
+              badge: null,
+            },
+            {
+              id: "family" as HostTab,
+              label: "Close Family",
+              icon: HeartHandshake,
+              badge: null,
+            },
+            {
+              id: "budget" as HostTab,
+              label: "Budget (₹)",
+              icon: Wallet,
+              badge: null,
+            },
+            {
+              id: "bookings" as HostTab,
+              label: "Bookings",
+              icon: Briefcase,
+              badge: null,
+            },
+            {
+              id: "team" as HostTab,
+              label: "Family & Admins",
+              icon: ShieldCheck,
+              badge: null,
             },
             {
               id: "updates" as HostTab,
               label: `Live Updates (${updates.length})`,
               icon: Bell,
+              badge: null,
             },
             {
               id: "overview" as HostTab,
               label: "Event Details",
               icon: Edit3,
+              badge: null,
             },
             {
               id: "analytics" as HostTab,
-              label: "Insights & Activity",
+              label: "Insights",
               icon: BarChart3,
+              badge: null,
             },
-          ].filter(t => !missingEventDetails(wedding).length || ["setup", "share", "overview"].includes(t.id)).map((t) => {
+          ]
+            .filter(
+              (t) =>
+                !missingEventDetails(wedding).length ||
+                [
+                  "setup",
+                  "share",
+                  "social",
+                  "family",
+                  "budget",
+                  "bookings",
+                  "team",
+                  "overview",
+                ].includes(t.id)
+            )
+            .map((t) => {
             const Icon = t.icon;
             const active = activeTab === t.id;
             return (
@@ -974,12 +1088,20 @@ export default function HostWeddingWorkspacePage() {
         </div>
       </div>
 
+      <div ref={tabContentRef} className="scroll-mt-20 space-y-5">
       {activeTab === "setup" && <EventSetupForm key={wedding.id} wedding={wedding} onNext={() => setActiveTab("share")} onInvite={() => setActiveTab("guests")} onSaved={syncUpdatedWedding} />}
       {activeTab !== "setup" && missingEventDetails(wedding).length > 0 && <div className="rounded-2xl bg-amber-50 border border-amber-200 p-5 text-sm">Complete the couple’s names, event details, invitation message and card before inviting contacts. <button onClick={()=>setActiveTab("setup")} className="underline font-semibold">Complete event details</button></div>}
 
       {/* TAB 1: GUEST LIST & CONTACT IMPORT */}
       {activeTab === "guests" && !missingEventDetails(wedding).length && (
         <div className="space-y-6">
+          <InviteProgressTracker
+            guests={guests}
+            activeGroup={groupFilter}
+            onSelectGroup={setGroupFilter}
+            onQuickFilterRemaining={() => setRsvpFilter("remaining")}
+          />
+
           {conflictGuests.length > 0 && (
             <div className="rounded-2xl border-2 border-amber-300 bg-amber-50/90 p-5 space-y-4 shadow-sm">
               <div className="flex min-w-0 items-start gap-3">
@@ -1214,6 +1336,43 @@ export default function HostWeddingWorkspacePage() {
                     />
                   </div>
                 </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-stone-700 mb-1">
+                      Family Circle / Side
+                    </label>
+                    <select
+                      value={manualGroup}
+                      onChange={(e) =>
+                        setManualGroup(e.target.value as GuestGroupId)
+                      }
+                      className="w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-xs focus:border-rose-600 focus:outline-none"
+                    >
+                      {GUEST_GROUPS.map((grp) => (
+                        <option key={grp.id} value={grp.id}>
+                          {grp.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-stone-700 mb-1">
+                      Expected Party Size
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={manualPartySize}
+                      onChange={(e) =>
+                        setManualPartySize(
+                          Math.min(20, Math.max(1, Number(e.target.value) || 1))
+                        )
+                      }
+                      className="w-full rounded-xl border border-stone-300 px-3 py-2 text-xs focus:border-rose-600 focus:outline-none"
+                    />
+                  </div>
+                </div>
                 <div className="flex items-center justify-between pt-1">
                   <span className="text-[11px] text-stone-400">
                     Duplicate phone numbers or emails are automatically flagged.
@@ -1357,6 +1516,8 @@ export default function HostWeddingWorkspacePage() {
                 {(
                   [
                     { id: "all", label: `All (${guests.length})` },
+                    { id: "remaining", label: `Remaining (${remainingGuestsCount})` },
+                    { id: "invited", label: `Invited (${invitedGuestsCount})` },
                     { id: "yes", label: `Yes (${stats.yes})` },
                     { id: "maybe", label: `Maybe (${stats.maybe})` },
                     { id: "no", label: `No (${stats.no})` },
@@ -1378,6 +1539,8 @@ export default function HostWeddingWorkspacePage() {
                       setRsvpFilter(
                         f.id as
                           | "all"
+                          | "remaining"
+                          | "invited"
                           | "yes"
                           | "maybe"
                           | "no"
@@ -1388,6 +1551,8 @@ export default function HostWeddingWorkspacePage() {
                     className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
                       rsvpFilter === f.id
                         ? "bg-stone-900 text-white"
+                        : f.id === "remaining" && remainingGuestsCount > 0
+                        ? "bg-amber-100 text-amber-900 hover:bg-amber-200"
                         : "bg-stone-100 text-stone-600 hover:bg-stone-200"
                     }`}
                   >
@@ -1437,6 +1602,16 @@ export default function HostWeddingWorkspacePage() {
                           RSVP: {g.rsvpStatus}
                         </span>
 
+                        <span className="rounded-full bg-stone-100 border border-stone-200 px-2 py-0.5 text-[10px] font-semibold text-stone-700">
+                          {guestGroupLabel(g.guestGroup)}
+                        </span>
+
+                        {g.partySize > 1 && (
+                          <span className="rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-900">
+                            {g.partySize} people
+                          </span>
+                        )}
+
                         <span
                           className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${
                             g.invitationStatus === "responded"
@@ -1445,11 +1620,11 @@ export default function HostWeddingWorkspacePage() {
                               ? "border-blue-200 bg-blue-50 text-blue-700"
                               : g.invitationStatus === "link_shared"
                               ? "border-amber-200 bg-amber-50 text-amber-800"
-                              : "border-stone-200 bg-stone-50 text-stone-500"
+                              : "border-amber-200 bg-amber-50/70 text-amber-900"
                           }`}
                         >
                           {g.invitationStatus === "not_shared" &&
-                            "Not Shared Yet"}
+                            "Remaining · Not Yet Invited"}
                           {g.invitationStatus === "link_shared" &&
                             "Link Shared (Delivery Unconfirmed)"}
                           {g.invitationStatus === "opened" &&
@@ -1469,6 +1644,17 @@ export default function HostWeddingWorkspacePage() {
                       <div className="text-xs text-stone-500 flex flex-wrap items-center gap-3">
                         {g.email && <span>{g.email}</span>}
                         {g.phone && <span>{g.phone}</span>}
+                        {(g.plannedArrival || g.plannedDeparture) && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                            <Calendar className="h-3 w-3" />
+                            Planned: {formatShortDate(g.plannedArrival) || "TBD"}
+                            {g.plannedDeparture &&
+                            g.plannedDeparture !== g.plannedArrival
+                              ? ` – ${formatShortDate(g.plannedDeparture)}`
+                              : ""}
+                            {!g.sharePlannedDates && " (Private)"}
+                          </span>
+                        )}
                       </div>
 
                       {g.rsvpNote && (
@@ -1513,6 +1699,19 @@ export default function HostWeddingWorkspacePage() {
         {invitationOptions(wedding).filter(o => o.key === shareInvitationKey).map(o => <MediaPreview key={o.key} asset={o.card} />)}
         <div className="flex gap-3"><button className="border rounded-xl px-4 py-2" onClick={() => setShareRequest(null)}>Cancel</button><button disabled={!invitationOptions(wedding).some(o => o.key === shareInvitationKey)} className="bg-rose-700 text-white rounded-xl px-4 py-2 disabled:opacity-50" onClick={() => executeShareInvite(shareRequest).catch(e => showToast("error", e.message || "Unable to share invitation"))}>Continue with selected invitation</button></div>
       </div></div>}
+
+      {/* NEW ORGANIZER & COLLABORATION TABS */}
+      {activeTab === "social" && (
+        <CelebrationSocialHub slugOrId={wedding.id} embedded />
+      )}
+      {activeTab === "family" && (
+        <CloseFamilyRoom slugOrId={wedding.id} embedded />
+      )}
+      {activeTab === "budget" && <FinancePlanner weddingId={wedding.id} />}
+      {activeTab === "bookings" && (
+        <VendorBookingsManager weddingId={wedding.id} />
+      )}
+      {activeTab === "team" && <TeamAccessManager weddingId={wedding.id} />}
 
       {/* TAB 3: LIVE EVENT UPDATES MANAGER */}
       {activeTab === "updates" && (
@@ -1812,26 +2011,32 @@ export default function HostWeddingWorkspacePage() {
             </div>
 
             <div className="flex items-center justify-between pt-2 border-t border-stone-100">
-              <button
-                type="button"
-                onClick={async () => {
-                  if (
-                    confirm(
-                      "Are you sure you want to delete this wedding event? Guests will no longer be able to access its invitation or updates."
-                    )
-                  ) {
-                    await fetch(`/api/weddings/${wedding.id}`, {
-                      method: "DELETE",
-                    });
-                    await refreshAuth();
-                    router.push("/");
-                  }
-                }}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2 text-xs font-semibold text-red-700 hover:bg-red-100"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                Delete Wedding
-              </button>
+              {isOwner ? (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (
+                      confirm(
+                        "Are you sure you want to delete this wedding event? Guests will no longer be able to access its invitation or updates."
+                      )
+                    ) {
+                      await fetch(`/api/weddings/${wedding.id}`, {
+                        method: "DELETE",
+                      });
+                      await refreshAuth();
+                      router.push("/");
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2 text-xs font-semibold text-red-700 hover:bg-red-100"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete Wedding
+                </button>
+              ) : (
+                <span className="text-xs text-stone-400">
+                  Only the event Owner can delete this celebration.
+                </span>
+              )}
 
               <button
                 type="submit"
@@ -1955,6 +2160,7 @@ export default function HostWeddingWorkspacePage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

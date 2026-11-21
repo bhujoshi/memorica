@@ -195,7 +195,11 @@ export default function GuestEventUpdatesPage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-8 space-y-6">
+    <div
+      className={`mx-auto max-w-3xl px-4 py-8 space-y-6 mood-${
+        wedding.moodTheme || "emerald"
+      }`}
+    >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Link
           href={`/invite/${wedding.slug}${
@@ -207,13 +211,22 @@ export default function GuestEventUpdatesPage() {
           Back to Invitation
         </Link>
 
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-200 px-3 py-1 text-xs font-semibold text-emerald-800">
-          <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
-          {role === "host" ? "Event Host" : "Verified Guest"}
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href={`/events/${wedding.slug}/social`}
+            className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-800 hover:bg-rose-100 transition"
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            Celebration Social Page
+          </Link>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-200 px-3 py-1 text-xs font-semibold text-emerald-800">
+            <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+            {role === "host" ? "Organizer" : "Verified Guest"}
+          </span>
+        </div>
       </div>
 
-      <div className="rounded-3xl bg-royal-header p-6 sm:p-8 text-white shadow-lg space-y-4">
+      <div className="rounded-3xl mood-hero p-6 sm:p-8 text-white shadow-lg space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1">
             <div className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-amber-200">

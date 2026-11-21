@@ -1,4 +1,16 @@
-export const EVENT_TYPES = ["Office outing", "Conference meeting", "Wedding", "Other"];
+export const EVENT_TYPES = [
+  "Birthday",
+  "Anniversary",
+  "Housewarming / Griha Pravesh",
+  "Wedding",
+  "Engagement",
+  "Baby Shower",
+  "Festival Gathering",
+  "Family Reunion",
+  "Office outing",
+  "Conference meeting",
+  "Other",
+];
 export interface EventMedia { id: string; name: string; mime: string }
 export interface SubEvent { id: string; name: string; from: string; to: string; remarks: string; card: EventMedia | null }
 export interface EventSetup {

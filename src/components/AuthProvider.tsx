@@ -27,8 +27,11 @@ import {
 } from "lucide-react";
 
 export interface HostedWeddingSummary extends WeddingDTO {
+  myRole?: "owner" | "co_admin";
   stats: {
     totalGuests: number;
+    invitedCount?: number;
+    remainingCount?: number;
     yesCount: number;
     noCount: number;
     maybeCount: number;
@@ -40,6 +43,8 @@ export interface HostedWeddingSummary extends WeddingDTO {
 }
 
 export interface InvitedWeddingSummary extends WeddingDTO {
+  myRole?: "close_family" | "guest";
+  canAccessFamily?: boolean;
   myRsvpStatus: RsvpStatus;
   myInviteToken?: string;
   updatesCount: number;

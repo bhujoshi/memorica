@@ -1,4 +1,5 @@
 import { missingEventDetails, invitationOptions } from "@/lib/event-setup";
+import { normalizeGuestGroup } from "@/lib/format";
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUserFromCookies } from "@/lib/auth";
 import {
@@ -151,6 +152,8 @@ export async function POST(
             name: body.name,
             email: body.email,
             phone: body.phone,
+            guestGroup: body.guestGroup,
+            partySize: body.partySize,
           },
         ];
 
@@ -265,6 +268,37 @@ export async function PATCH(
       return NextResponse.json({
         guests: rows.map(mapGuestToDTO),
       });
+    }
+
+    if (body.action === "update_guest") {
+      const { guestId, guestGroup, partySize } = body as {
+        guestId?: string;
+        guestGroup?: string;
+        partySize?: number;
+      };
+      if (!guestId) {
+        return NextResponse.json({ error: "Guest ID is required." }, { status: 400 });
+      }
+      const existing = await prisma.guest.findFirst({
+        where: { id: guestId, weddingId },
+      });
+      if (!existing) {
+        return NextResponse.json({ error: "Guest not found." }, { status: 404 });
+      }
+      await prisma.guest.update({
+        where: { id: existing.id },
+        data: {
+          ...(guestGroup !== undefined ? { guestGroup: normalizeGuestGroup(guestGroup) } : {}),
+          ...(typeof partySize === "number" && Number.isFinite(partySize)
+            ? { partySize: Math.min(20, Math.max(1, Math.round(partySize))) }
+            : {}),
+        },
+      });
+      const rows = await prisma.guest.findMany({
+        where: { weddingId },
+        orderBy: { createdAt: "desc" },
+      });
+      return NextResponse.json({ guests: rows.map(mapGuestToDTO) });
     }
 
     if (body.action === "delete_guest") {

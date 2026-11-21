@@ -80,6 +80,7 @@ interface BackupWeddingRecord {
   ownerUserId: string;
   eventType: string;
   otherEventType: string;
+  moodTheme?: string;
   setupDetails?: string;
   setupFull?: boolean;
   eventTitle: string;
@@ -157,6 +158,7 @@ export async function hydrateBackupWeddingsFromCookie(): Promise<void> {
             ownerUserId: dbUser.id,
             eventType: w.eventType || "Wedding",
             otherEventType: w.otherEventType || "",
+            moodTheme: w.moodTheme || "emerald",
             setupDetails,
             eventTitle: w.eventTitle,
             coupleNames: w.coupleNames,
@@ -211,6 +213,7 @@ export async function hydrateBackupWeddingsFromCookie(): Promise<void> {
           data: {
             eventType: w.eventType || existingWedding.eventType,
             otherEventType: w.otherEventType ?? existingWedding.otherEventType,
+            moodTheme: w.moodTheme || existingWedding.moodTheme,
             setupDetails,
             eventTitle: w.eventTitle,
             coupleNames: w.coupleNames,
@@ -246,6 +249,7 @@ export async function buildWeddingsBackupCookieValue(
       ownerUserId: w.ownerUserId,
       eventType: w.eventType,
       otherEventType: w.otherEventType,
+      moodTheme: w.moodTheme,
       setupDetails: w.setupDetails,
       setupFull: true,
       eventTitle: w.eventTitle,

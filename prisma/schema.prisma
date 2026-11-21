@@ -27,6 +27,14 @@ model User {
   linkedGuests        Guest[]
   authoredUpdates     EventUpdate[]
   sessions            Session[]
+  roleInvitesSent     EventRoleInvite[] @relation("RoleInviteSender")
+  socialPosts         SocialPost[]
+  socialComments      SocialComment[]
+  socialReactions     SocialReaction[]
+  sharedPhotos        SharedPhoto[]
+  familyPollsCreated  FamilyPoll[]
+  familyPollVotes     FamilyPollVote[]
+  familyTasksCreated  FamilyTask[]
 }
 
 model Session {
@@ -54,27 +62,35 @@ model OtpVerification {
 }
 
 model Wedding {
-  id          String            @id @default(cuid())
-  eventType   String            @default("Wedding")
-  otherEventType String         @default("")
-  setupDetails String           @default("{}")
-  assets EventAsset[]
-  slug        String            @unique
-  ownerUserId String
-  owner       User              @relation("WeddingOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
-  eventTitle  String
-  coupleNames String
-  date        DateTime
-  endDate     DateTime?
-  venue       String
-  description String?
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  id             String            @id @default(cuid())
+  eventType      String            @default("Wedding")
+  otherEventType String            @default("")
+  moodTheme      String            @default("emerald")
+  setupDetails   String            @default("{}")
+  assets         EventAsset[]
+  slug           String            @unique
+  ownerUserId    String
+  owner          User              @relation("WeddingOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  eventTitle     String
+  coupleNames    String
+  date           DateTime
+  endDate        DateTime?
+  venue          String
+  description    String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
 
-  guests      Guest[]
-  updates     EventUpdate[]
-  memberships EventMembership[]
-  analytics   AnalyticsEvent[]
+  guests         Guest[]
+  updates        EventUpdate[]
+  memberships    EventMembership[]
+  roleInvites    EventRoleInvite[]
+  socialPosts    SocialPost[]
+  sharedPhotos   SharedPhoto[]
+  familyPolls    FamilyPoll[]
+  familyTasks    FamilyTask[]
+  budgetItems    BudgetItem[]
+  vendorBookings VendorBooking[]
+  analytics      AnalyticsEvent[]
 
   @@index([ownerUserId])
 }
@@ -88,11 +104,16 @@ model Guest {
   name                     String
   email                    String?
   phone                    String?
+  guestGroup               String    @default("general")
+  partySize                Int       @default(1)
   inviteToken              String    @unique @default(cuid())
   invitationStatus         String    @default("not_shared") // "not_shared" | "link_shared" | "opened" | "responded"
   rsvpStatus               String    @default("pending")    // "pending" | "yes" | "no" | "maybe"
   rsvpNote                 String?
   rsvpUpdatedAt            DateTime?
+  plannedArrival           DateTime?
+  plannedDeparture         DateTime?
+  sharePlannedDates        Boolean   @default(true)
   linkedUserId             String?
   linkedUser               User?     @relation(fields: [linkedUserId], references: [id], onDelete: SetNull)
   source                   String    @default("manual")     // "manual" | "contact_picker" | "file_import" | "self_rsvp"
@@ -160,12 +181,14 @@ model AnalyticsEvent {
 }
 
 model EventAsset {
-  id String @id @default(cuid())
-  weddingId String
-  wedding Wedding @relation(fields: [weddingId], references: [id], onDelete: Cascade)
-  name String
-  mime String
-  data Bytes
+  id         String  @id @default(cuid())
+  weddingId  String
+  wedding    Wedding @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  name       String
+  mime       String
+  scope      String  @default("setup") // "setup" | "social" | "photo" | "receipt"
+  storageUrl String?
+  data       Bytes
   @@index([weddingId])
 }
 
@@ -183,4 +206,183 @@ model WhatsAppInvitation {
   updatedAt     DateTime @updatedAt
 
   @@unique([guestId, invitationKey])
+}
+
+model EventRoleInvite {
+  id              String   @id @default(cuid())
+  weddingId       String
+  wedding         Wedding  @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  name            String
+  email           String?
+  phone           String?
+  role            String   // "co_admin" | "close_family"
+  status          String   @default("pending") // "pending" | "accepted" | "revoked"
+  invitedByUserId String
+  invitedBy       User     @relation("RoleInviteSender", fields: [invitedByUserId], references: [id], onDelete: Cascade)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([weddingId, status])
+  @@index([email])
+  @@index([phone])
+}
+
+model SocialPost {
+  id           String           @id @default(cuid())
+  weddingId    String
+  wedding      Wedding          @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  authorUserId String
+  author       User             @relation(fields: [authorUserId], references: [id], onDelete: Cascade)
+  space        String           @default("social") // "social" | "family"
+  kind         String           @default("moment") // "moment" | "wish" | "plan" | "photo"
+  content      String
+  mediaAssetId String?
+  isPinned     Boolean          @default(false)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  comments     SocialComment[]
+  reactions    SocialReaction[]
+
+  @@index([weddingId, space, createdAt])
+}
+
+model SocialComment {
+  id           String     @id @default(cuid())
+  postId       String
+  post         SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  authorUserId String
+  author       User       @relation(fields: [authorUserId], references: [id], onDelete: Cascade)
+  content      String
+  createdAt    DateTime   @default(now())
+
+  @@index([postId, createdAt])
+}
+
+model SocialReaction {
+  id        String     @id @default(cuid())
+  postId    String
+  post      SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emoji     String     // "heart" | "party" | "blessings" | "sparkles"
+  createdAt DateTime   @default(now())
+
+  @@unique([postId, userId, emoji])
+  @@index([postId])
+}
+
+model SharedPhoto {
+  id             String   @id @default(cuid())
+  weddingId      String
+  wedding        Wedding  @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  uploaderUserId String
+  uploader       User     @relation(fields: [uploaderUserId], references: [id], onDelete: Cascade)
+  albumName      String   @default("All Memories")
+  caption        String?
+  assetId        String
+  createdAt      DateTime @default(now())
+
+  @@index([weddingId, albumName, createdAt])
+}
+
+model FamilyPoll {
+  id            String             @id @default(cuid())
+  weddingId     String
+  wedding       Wedding            @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  creatorUserId String
+  creator       User               @relation(fields: [creatorUserId], references: [id], onDelete: Cascade)
+  question      String
+  category      String             @default("other")
+  allowMultiple Boolean            @default(false)
+  isClosed      Boolean            @default(false)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  options       FamilyPollOption[]
+  votes         FamilyPollVote[]
+
+  @@index([weddingId, createdAt])
+}
+
+model FamilyPollOption {
+  id        String           @id @default(cuid())
+  pollId    String
+  poll      FamilyPoll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  label     String
+  sortOrder Int              @default(0)
+  votes     FamilyPollVote[]
+
+  @@index([pollId, sortOrder])
+}
+
+model FamilyPollVote {
+  id        String           @id @default(cuid())
+  pollId    String
+  poll      FamilyPoll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  optionId  String
+  option    FamilyPollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime         @default(now())
+
+  @@unique([pollId, optionId, userId])
+  @@index([pollId])
+}
+
+model FamilyTask {
+  id            String    @id @default(cuid())
+  weddingId     String
+  wedding       Wedding   @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  creatorUserId String
+  creator       User      @relation(fields: [creatorUserId], references: [id], onDelete: Cascade)
+  title         String
+  assigneeName  String?
+  category      String    @default("other")
+  status        String    @default("todo") // "todo" | "in_progress" | "done"
+  dueDate       DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([weddingId, status])
+}
+
+model BudgetItem {
+  id              String    @id @default(cuid())
+  weddingId       String
+  wedding         Wedding   @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  category        String    @default("other")
+  title           String
+  estimatedAmount Int       @default(0)
+  actualAmount    Int       @default(0)
+  paidAmount      Int       @default(0)
+  paidBy          String?
+  paymentStatus   String    @default("planned") // "planned" | "partial" | "paid"
+  dueDate         DateTime?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([weddingId, category])
+}
+
+model VendorBooking {
+  id             String    @id @default(cuid())
+  weddingId      String
+  wedding        Wedding   @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  category       String    @default("other")
+  vendorName     String
+  contactName    String?
+  contactPhone   String?
+  status         String    @default("shortlisted") // "shortlisted" | "booked" | "advance_paid" | "fully_paid" | "cancelled"
+  totalAmount    Int       @default(0)
+  advancePaid    Int       @default(0)
+  balanceDueDate DateTime?
+  eventDay       String?
+  notes          String?
+  receiptAssetId String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([weddingId, status])
 }

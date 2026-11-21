@@ -35,7 +35,8 @@ export async function GET(
 
   const inviteToken = req.nextUrl.searchParams.get("guest") || undefined;
   const currentUser = await getAuthenticatedUserFromCookies();
-  if (currentUser?.id !== wedding.ownerUserId && missingEventDetails(mapWeddingToDTO(wedding)).length) return NextResponse.json({error:"The host is still completing this event invitation."},{status:403});
+  const access = await getWeddingAccess(wedding.id, currentUser?.id);
+  if (!access.canManage && missingEventDetails(mapWeddingToDTO(wedding)).length) return NextResponse.json({error:"The host is still completing this event invitation."},{status:403});
 
   let matchedGuestRow = inviteToken
     ? await prisma.guest.findFirst({
@@ -55,7 +56,6 @@ export async function GET(
     }
   }
 
-  const access = await getWeddingAccess(wedding.id, currentUser?.id);
   const matchedGuestDTO = matchedGuestRow
     ? mapGuestToDTO(matchedGuestRow)
     : access.guestRecord || null;
@@ -86,6 +86,7 @@ export async function GET(
     },
   });
 
+  const weddingDto = mapWeddingToDTO(wedding);
   return NextResponse.json({
     wedding: {
       id: wedding.id,
@@ -97,7 +98,8 @@ export async function GET(
       venue: wedding.venue,
       description: wedding.description,
       eventType: wedding.eventType,
-      setup: mapWeddingToDTO(wedding).setup,
+      moodTheme: weddingDto.moodTheme,
+      setup: weddingDto.setup,
       selectedInvitationKey: selected.key,
       selectedInvitationTitle: selected.title,
       selectedCard: selected.card,
@@ -112,13 +114,20 @@ export async function GET(
           rsvpStatus: matchedGuestDTO.rsvpStatus,
           rsvpNote: matchedGuestDTO.rsvpNote || "",
           rsvpUpdatedAt: matchedGuestDTO.rsvpUpdatedAt,
+          partySize: matchedGuestDTO.partySize,
+          plannedArrival: matchedGuestDTO.plannedArrival,
+          plannedDeparture: matchedGuestDTO.plannedDeparture,
+          sharePlannedDates: matchedGuestDTO.sharePlannedDates,
           isLinkedToUser: Boolean(matchedGuestDTO.linkedUserId),
         }
       : null,
     viewerAccess: {
       isAuthenticated: Boolean(currentUser),
       role: access.role,
+      detailedRole: access.detailedRole,
       canViewUpdates: access.canViewUpdates,
+      canAccessSocial: access.canAccessSocial,
+      canAccessFamily: access.canAccessFamily,
       canManage: access.canManage,
       publishedUpdatesCount,
     },
@@ -133,7 +142,19 @@ export async function POST(
     const body = await req.json();
     const currentUser = await getAuthenticatedUserFromCookies();
 
-    const { name, email, phone, rsvpStatus, rsvpNote, inviteToken, invitationKey } = body as {
+    const {
+      name,
+      email,
+      phone,
+      rsvpStatus,
+      rsvpNote,
+      inviteToken,
+      invitationKey,
+      partySize,
+      plannedArrival,
+      plannedDeparture,
+      sharePlannedDates,
+    } = body as {
       name?: string;
       email?: string;
       phone?: string;
@@ -141,6 +162,10 @@ export async function POST(
       rsvpNote?: string;
       inviteToken?: string;
       invitationKey?: string;
+      partySize?: number;
+      plannedArrival?: string | null;
+      plannedDeparture?: string | null;
+      sharePlannedDates?: boolean;
     };
 
     const result = await submitGuestRsvp({
@@ -152,6 +177,10 @@ export async function POST(
       phone,
       rsvpStatus: (rsvpStatus || "yes") as RsvpStatus,
       rsvpNote,
+      partySize,
+      plannedArrival,
+      plannedDeparture,
+      sharePlannedDates,
       authenticatedUserId: currentUser?.id,
     });
 
@@ -165,6 +194,10 @@ export async function POST(
         rsvpStatus: result.guest.rsvpStatus,
         rsvpNote: result.guest.rsvpNote,
         rsvpUpdatedAt: result.guest.rsvpUpdatedAt,
+        partySize: result.guest.partySize,
+        plannedArrival: result.guest.plannedArrival,
+        plannedDeparture: result.guest.plannedDeparture,
+        sharePlannedDates: result.guest.sharePlannedDates,
       },
       resolutionType: result.resolutionType,
     });
