@@ -1,5 +1,6 @@
 "use client";
 import MobileEventNav, { HostTab } from "@/components/MobileEventNav";
+import ContactImport from "@/components/guests/ContactImport";
 import GuestInvitationActions from "@/components/GuestInvitationActions";
 import WhatsAppInvitations from "@/components/WhatsAppInvitations";
 import EventCreatedCelebration from "@/components/EventCreatedCelebration";
@@ -39,7 +40,6 @@ import {
   AlertTriangle,
   BarChart3,
   Bell,
-  BookUser,
   Briefcase,
   Calendar,
   CheckCircle2,
@@ -54,27 +54,14 @@ import {
   Send,
   Share2,
   ShieldCheck,
-  Smartphone,
   Sparkles,
   Trash2,
-  Upload,
   UserCheck,
   UserPlus,
   Users,
   Wallet,
   X,
 } from "lucide-react";
-
-interface ImportPreviewItem {
-  tempId: string;
-  name: string;
-  email: string;
-  phone: string;
-  isDuplicate: boolean;
-  isInvalid: boolean;
-  duplicateReason: string | null;
-  selected: boolean;
-}
 
 export default function HostWeddingWorkspacePage() {
   const params = useParams<{ id: string }>();
@@ -155,19 +142,6 @@ export default function HostWeddingWorkspacePage() {
   const [shareInvitationKey, setShareInvitationKey] = useState("");
   const [addingGuest, setAddingGuest] = useState(false);
   const manualNameInputRef = useRef<HTMLInputElement>(null);
-
-  // Contact Import Review Staging state
-  const [importPreview, setImportPreview] = useState<ImportPreviewItem[] | null>(
-    null
-  );
-  const [importSource, setImportSource] = useState<
-    "contact_picker" | "file_import"
-  >("contact_picker");
-  const [importFallbackWarning, setImportFallbackWarning] = useState<
-    string | null
-  >(null);
-  const [confirmingImport, setConfirmingImport] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Guest list filtering
   const [guestSearch, setGuestSearch] = useState("");
@@ -364,210 +338,6 @@ export default function HostWeddingWorkspacePage() {
       );
     } finally {
       setAddingGuest(false);
-    }
-  };
-
-  const openContactReviewStaging = async (
-    rawCandidates: Array<{ name?: string; email?: string; phone?: string }>,
-    source: "contact_picker" | "file_import"
-  ) => {
-    if (!wedding) return;
-    setImportSource(source);
-    setImportFallbackWarning(null);
-
-    await fetch(`/api/weddings/${wedding.id}/guests`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: "log_import_event",
-        status: "started",
-        source,
-      }),
-    });
-
-    const res = await fetch(`/api/weddings/${wedding.id}/guests`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: "preview_import",
-        candidates: rawCandidates,
-      }),
-    });
-    const data = await res.json();
-    if (res.ok && data.preview) {
-      setImportPreview(data.preview);
-    }
-  };
-
-  const handleImportFailureFallback = async (
-    reason: string,
-    userMessage: string
-  ) => {
-    if (!wedding) return;
-    await fetch(`/api/weddings/${wedding.id}/guests`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: "log_import_event",
-        status: "failed",
-        source: "contact_picker",
-        reason,
-      }),
-    });
-    setImportPreview(null);
-    setImportFallbackWarning(userMessage);
-    await loadWorkspace();
-    manualNameInputRef.current?.focus();
-  };
-
-  const handleDeviceContactPicker = async () => {
-    if (!wedding) return;
-    setImportFallbackWarning(null);
-
-    const nav = navigator as unknown as {
-      contacts?: {
-        select: (
-          props: string[],
-          opts: { multiple: boolean }
-        ) => Promise<
-          Array<{ name?: string[]; email?: string[]; tel?: string[] }>
-        >;
-      };
-    };
-
-    if (!nav.contacts || typeof nav.contacts.select !== "function") {
-      await handleImportFailureFallback(
-        "unsupported_browser",
-        "Direct device contact picker is only supported on mobile browsers (such as Chrome on Android or iOS Safari with Contact Picker enabled). Please upload a CSV or vCard (.vcf) contacts file, or add guests manually below."
-      );
-      return;
-    }
-
-    try {
-      const selected = await nav.contacts.select(["name", "email", "tel"], {
-        multiple: true,
-      });
-      if (!selected || selected.length === 0) return;
-      const formatted = selected.map((c) => ({
-        name: c.name?.[0] || "Contact",
-        email: c.email?.[0] || "",
-        phone: c.tel?.[0] || "",
-      }));
-      await openContactReviewStaging(formatted, "contact_picker");
-    } catch {
-      await handleImportFailureFallback(
-        "permission_denied",
-        "Contact access was declined or cancelled. You can upload a CSV/vCard file or enter guests manually below."
-      );
-    }
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const text = await file.text();
-      const candidates: Array<{ name: string; email?: string; phone?: string }> =
-        [];
-
-      if (file.name.toLowerCase().endsWith(".vcf")) {
-        const cards = text.split(/BEGIN:VCARD/i).slice(1);
-        for (const card of cards) {
-          const fnMatch = card.match(/FN:(.*)/i);
-          const emailMatch = card.match(/EMAIL[^:]*:(.*)/i);
-          const telMatch = card.match(/TEL[^:]*:(.*)/i);
-          if (fnMatch || emailMatch || telMatch) {
-            candidates.push({
-              name: fnMatch?.[1]?.trim() || "Contact",
-              email: emailMatch?.[1]?.trim(),
-              phone: telMatch?.[1]?.trim(),
-            });
-          }
-        }
-      } else {
-        const lines = text
-          .split(/\r?\n/)
-          .map((l) => l.trim())
-          .filter(Boolean);
-        for (let i = 0; i < lines.length; i++) {
-          const cols = lines[i].split(",").map((c) => c.trim());
-          if (
-            i === 0 &&
-            (cols[0]?.toLowerCase().includes("name") ||
-              cols[1]?.toLowerCase().includes("email"))
-          ) {
-            continue;
-          }
-          if (cols.length >= 2) {
-            candidates.push({
-              name: cols[0] || `Guest ${i + 1}`,
-              email: cols[1] || "",
-              phone: cols[2] || "",
-            });
-          }
-        }
-      }
-
-      if (candidates.length === 0) {
-        await handleImportFailureFallback(
-          "empty_or_invalid_file",
-          "No valid contacts with a phone number or email were found in the selected file. Please check the file format (Name, Email, Phone) or add guests manually."
-        );
-        return;
-      }
-
-      await openContactReviewStaging(candidates, "file_import");
-    } catch {
-      await handleImportFailureFallback(
-        "file_parse_error",
-        "Could not read the selected contacts file. Please use a standard CSV or vCard (.vcf) file or enter guests manually."
-      );
-    } finally {
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  };
-
-  const handleConfirmStagedImport = async () => {
-    if (!wedding || !importPreview) return;
-    const selected = importPreview.filter((item) => item.selected);
-    if (selected.length === 0) {
-      showToast("error", "Please select at least one contact to add.");
-      return;
-    }
-
-    setConfirmingImport(true);
-    try {
-      const res = await fetch(`/api/weddings/${wedding.id}/guests`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          source: importSource,
-          skipDuplicates: false,
-          candidates: selected.map((s) => ({
-            name: s.name,
-            email: s.email || undefined,
-            phone: s.phone || undefined,
-          })),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Import failed");
-
-      setImportPreview(null);
-      await loadWorkspace();
-      await refreshAuth();
-      showToast(
-        "success",
-        `Added ${data.added?.length || 0} contact(s) to your guest list.`
-      );
-    } catch (err) {
-      showToast(
-        "error",
-        err instanceof Error ? err.message : "Failed to import contacts"
-      );
-    } finally {
-      setConfirmingImport(false);
     }
   };
 
@@ -1211,72 +981,7 @@ export default function HostWeddingWorkspacePage() {
           )}
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Import Contacts Card */}
-            <div className="lg:col-span-5 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm space-y-4">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-50 text-rose-700">
-                  <BookUser className="h-5 w-5" />
-                </div>
-                <div>
-                  <h2 className="text-sm font-bold text-stone-900">
-                    Import Contacts
-                  </h2>
-                  <p className="text-xs text-stone-500">
-                    Review selected contacts before adding. Importing never
-                    automatically sends invitations.
-                  </p>
-                </div>
-              </div>
-
-              {importFallbackWarning && (
-                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 flex items-start gap-2">
-                  <AlertCircle className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
-                  <div>{importFallbackWarning}</div>
-                </div>
-              )}
-
-              <div className="space-y-2.5">
-                <button
-                  type="button"
-                  onClick={handleDeviceContactPicker}
-                  className="w-full flex items-center justify-between rounded-xl border border-rose-200 bg-rose-50/70 px-4 py-3 text-left hover:bg-rose-100/70 transition"
-                >
-                  <div className="flex items-center gap-3">
-                    <Smartphone className="h-5 w-5 text-rose-700 shrink-0" />
-                    <div>
-                      <div className="text-xs font-bold text-stone-900">
-                        Select from Mobile Contacts
-                      </div>
-                      <div className="text-[11px] text-stone-600">
-                        Uses your device&apos;s native Contact Picker on
-                        supported browsers
-                      </div>
-                    </div>
-                  </div>
-                  <span className="rounded-lg bg-rose-700 px-2.5 py-1 text-[11px] font-semibold text-white">
-                    Open
-                  </span>
-                </button>
-
-                <div>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".csv,.vcf,text/csv,text/vcard"
-                    onChange={handleFileUpload}
-                    className="hidden"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="w-full flex items-center justify-center gap-2 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2.5 text-xs font-semibold text-stone-700 hover:bg-stone-100 transition"
-                  >
-                    <Upload className="h-4 w-4 text-stone-600" />
-                    Import from CSV or vCard (.vcf) File
-                  </button>
-                </div>
-              </div>
-            </div>
+            <ContactImport eventId={wedding.id} guests={guests} onAdded={async()=>{await loadWorkspace();await refreshAuth();}}/>
 
             {/* Manual Guest Entry Form */}
             <div className="lg:col-span-7 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm space-y-4">
@@ -1390,115 +1095,6 @@ export default function HostWeddingWorkspacePage() {
             </div>
           </div>
 
-          {/* Contact Import Review Staging Modal */}
-          {importPreview && (
-            <div className="sheet-overlay fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-stone-950/40 sm:p-4 backdrop-blur-sm">
-              <div className="sheet-panel w-full max-w-2xl rounded-t-3xl sm:rounded-3xl bg-[#ffffff] p-5 sm:p-6 shadow-2xl border border-rose-100 space-y-4 max-h-[90dvh] flex flex-col">
-                <div className="flex items-center justify-between border-b border-stone-100 pb-3">
-                  <div>
-                    <h3 className="font-serif text-lg font-bold text-stone-900">
-                      Review Selected Contacts
-                    </h3>
-                    <p className="text-xs text-stone-500">
-                      Duplicate phone numbers or emails are highlighted below.
-                      Importing adds guests to your list without sending
-                      invitations automatically.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setImportPreview(null)}
-                    className="rounded-lg p-1 text-stone-400 hover:bg-stone-100"
-                  >
-                    <X className="h-5 w-5" />
-                  </button>
-                </div>
-
-                <div className="overflow-y-auto flex-1 space-y-2 pr-1">
-                  {importPreview.map((item, idx) => (
-                    <label
-                      key={item.tempId}
-                      className={`flex items-start justify-between gap-3 rounded-xl border p-3 cursor-pointer transition ${
-                        item.isDuplicate
-                          ? "border-amber-300 bg-amber-50/60"
-                          : item.selected
-                          ? "border-rose-300 bg-rose-50/30"
-                          : "border-stone-200 bg-white"
-                      }`}
-                    >
-                      <div className="flex min-w-0 items-start gap-3">
-                        <input
-                          type="checkbox"
-                          checked={item.selected}
-                          disabled={item.isInvalid}
-                          onChange={(e) => {
-                            const next = [...importPreview];
-                            next[idx] = {
-                              ...item,
-                              selected: e.target.checked,
-                            };
-                            setImportPreview(next);
-                          }}
-                          className="mt-1 h-4 w-4 rounded border-stone-300 text-rose-700 focus:ring-rose-600"
-                        />
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-xs font-bold text-stone-900">
-                              {item.name}
-                            </span>
-                            {item.isDuplicate && (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 border border-amber-300 px-2 py-0.5 text-[10px] font-semibold text-amber-900">
-                                <AlertTriangle className="h-3 w-3" />
-                                {item.duplicateReason}
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-xs text-stone-500 mt-0.5">
-                            {item.email || "No email"} •{" "}
-                            {item.phone || "No phone"}
-                          </div>
-                        </div>
-                      </div>
-                      <span className="text-[11px] font-medium text-stone-500">
-                        {item.selected ? "Selected" : "Skipped"}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-
-                <div className="flex items-center justify-between border-t border-stone-100 pt-3">
-                  <span className="text-xs text-stone-500">
-                    Selected:{" "}
-                    <strong>
-                      {importPreview.filter((i) => i.selected).length}
-                    </strong>{" "}
-                    of {importPreview.length} contacts
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setImportPreview(null)}
-                      className="rounded-xl border border-stone-200 px-4 py-2 text-xs font-medium text-stone-600 hover:bg-stone-50"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      disabled={confirmingImport}
-                      onClick={handleConfirmStagedImport}
-                      className="rounded-xl bg-rose-700 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-800 disabled:opacity-50"
-                    >
-                      {confirmingImport
-                        ? "Adding..."
-                        : "Add Selected Contacts"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Guest List Search, Filter & Table */}
           <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="relative flex-1 w-full sm:max-w-sm">

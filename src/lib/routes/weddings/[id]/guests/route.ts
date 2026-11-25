@@ -1,15 +1,12 @@
+import { contactPreview } from "@/lib/contact-import";
 import { missingEventDetails, invitationOptions } from "@/lib/event-setup";
 import { normalizeGuestGroup } from "@/lib/format";
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUserFromCookies } from "@/lib/auth";
 import {
   addGuestsToWedding,
-  emailsMatch,
   getWeddingAccess,
   mapGuestToDTO,
-  normalizeEmail,
-  normalizePhone,
-  phonesMatch,
   resolveGuestConflict,
   trackAnalyticsEvent,
 } from "@/lib/db";
@@ -95,52 +92,8 @@ export async function POST(
         where: { weddingId: access.wedding.id },
       });
       const rawContacts = Array.isArray(body.candidates) ? body.candidates : [];
-      const seenEmails = new Set<string>();
-      const seenPhones = new Set<string>();
-
-      const preview = rawContacts.map(
-        (
-          c: { name?: string; email?: string; phone?: string },
-          idx: number
-        ) => {
-          const name = (c.name || "").trim() || `Contact #${idx + 1}`;
-          const email = normalizeEmail(c.email);
-          const phone = normalizePhone(c.phone);
-
-          const existingMatch = existingGuests.find(
-            (g) =>
-              (email && emailsMatch(g.email, email)) ||
-              (phone && phonesMatch(g.phone, phone))
-          );
-
-          const inBatchDup =
-            (email && seenEmails.has(email)) ||
-            (phone && seenPhones.has(phone));
-
-          if (email) seenEmails.add(email);
-          if (phone) seenPhones.add(phone);
-
-          let duplicateReason: string | null = null;
-          if (existingMatch) {
-            duplicateReason = `Already on guest list as "${existingMatch.name}"`;
-          } else if (inBatchDup) {
-            duplicateReason = "Duplicate contact within imported selection";
-          } else if (!email && !phone) {
-            duplicateReason = "Missing both phone and email";
-          }
-
-          return {
-            tempId: `imp_${idx}`,
-            name,
-            email: email || "",
-            phone: phone || "",
-            isDuplicate: Boolean(existingMatch || inBatchDup),
-            isInvalid: !email && !phone,
-            duplicateReason,
-            selected: !existingMatch && !inBatchDup && Boolean(email || phone),
-          };
-        }
-      );
+      if (rawContacts.length > 500) return NextResponse.json({error:"Choose up to 500 contacts at a time."},{status:400});
+      const preview = contactPreview(rawContacts, existingGuests);
 
       return NextResponse.json({ preview });
     }

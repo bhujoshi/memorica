@@ -1,3 +1,4 @@
+import { contactValues } from "./contact-import";
 import { parseEventSetup, normalizeEventSetup, EVENT_TYPES, missingEventDetails, validateSubEventDates, invitationOptions } from "./event-setup";
 import { normalizeEventMood, normalizeGuestGroup } from "./format";
 import crypto from "crypto";
@@ -942,6 +943,14 @@ export async function addGuestsToWedding(params: {
     "Forbidden: Only event organizers can manage the guest list."
   );
 
+  if (!Array.isArray(params.candidates) || params.candidates.length > 500) throw new Error("Choose up to 500 contacts at a time.");
+  // Validate the complete batch before writing any guest, avoiding partial imports.
+  const candidates = params.candidates.map((raw, index) => {
+    const value = contactValues({name:raw.name,phone:raw.phone || "",email:raw.email || ""});
+    if (value.error) throw new Error(`Contact ${index + 1}: ${value.error}`);
+    return {...raw,name:value.name,phone:value.phone,email:value.email || null};
+  });
+
   const choices = invitationOptions(mapWeddingToDTO(wedding));
   if (params.invitationKey && !choices.some(option => option.key === params.invitationKey)) throw new Error("Select an available invitation card for these guests.");
   const existingGuests = await prisma.guest.findMany({
@@ -957,18 +966,8 @@ export async function addGuestsToWedding(params: {
     reason: string;
   }> = [];
 
-  for (const raw of params.candidates) {
-    const name = (raw.name || "").trim();
-    const email = normalizeEmail(raw.email);
-    const phone = normalizePhone(raw.phone);
-
-    if (!name) continue;
-    if (params.source === "manual" && !phone) throw new Error(`Guest "${name}" needs a mobile number.`);
-    if (!email && !phone) {
-      throw new Error(
-        `Guest "${name}" must have at least an email address or phone number.`
-      );
-    }
+  for (const raw of candidates) {
+    const {name,email,phone} = raw;
 
     const dupByEmail = email
       ? workingGuests.find((g) => emailsMatch(g.email, email))
@@ -980,8 +979,8 @@ export async function addGuestsToWedding(params: {
     const duplicate = dupByEmail || dupByPhone;
     if (duplicate) {
       const reason = dupByEmail
-        ? `Duplicate email (${email}) matches existing guest "${duplicate.name}"`
-        : `Duplicate phone (${phone}) matches existing guest "${duplicate.name}"`;
+        ? "This email is already in the guest list."
+        : "This mobile number is already in the guest list.";
       duplicatesFlagged.push({
         candidate: { name, email, phone },
         existingGuest: mapGuestToDTO(duplicate),

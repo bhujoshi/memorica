@@ -68,6 +68,7 @@ function cleanupDb() {
 
 (async () => {
   cleanupDb();
+  fs.writeFileSync(TEST_DB_PATH, "");
   execFileSync(
     path.resolve("node_modules/.bin/prisma"),
     ["db", "push", "--skip-generate", "--accept-data-loss"],
@@ -620,6 +621,21 @@ function cleanupDb() {
     );
     assert.equal(revokedAccess.canAccessFamily, false);
     assert.equal(revokedAccess.canAccessFinances, false);
+
+    // Contact imports validate the entire batch and accept name + mobile without email.
+    const importInput = {weddingId:wedding.id, ownerUserId:owner.id, source:"contact_picker"};
+    const countBeforeImport = await prisma.guest.count({where:{weddingId:wedding.id}});
+    await assert.rejects(addGuestsToWedding({...importInput,candidates:[{name:"Valid first",phone:"9876543210"},{name:"Email only",email:"optional@example.com"}]}),/valid mobile/);
+    assert.equal(await prisma.guest.count({where:{weddingId:wedding.id}}),countBeforeImport);
+    await assert.rejects(addGuestsToWedding({...importInput,candidates:[{name:"",phone:"9876543210"}]}),/Name is required/);
+    const imported = await addGuestsToWedding({...importInput,candidates:[{name:"Phone-only contact",phone:"98765 43210"}],skipDuplicates:true});
+    assert.equal(imported.added.length,1);
+    assert.equal(imported.added[0].phone,"+919876543210");
+    assert.equal(imported.added[0].email,null);
+    assert.equal(imported.added[0].invitationStatus,"not_shared");
+    const repeated = await addGuestsToWedding({...importInput,candidates:[{name:"Same contact",phone:"+919876543210"}],skipDuplicates:true});
+    assert.equal(repeated.added.length,0);
+    assert.equal(repeated.duplicatesFlagged.length,1);
 
     console.log("Memorica platform tests passed (RBAC, invites, planned dates privacy, social, family polls, INR finance & bookings)");
   } finally {
